@@ -205,26 +205,28 @@ export default function CostEntry() {
       <header className="bg-white shadow-sm border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
-            <div className="flex items-center space-x-4">
-              <Link
-                href="/dashboard"
-                className="text-gray-500 hover:text-gray-700 transition-colors duration-200"
-              >
-                <svg
-                  className="w-5 h-5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M15 19l-7-7 7-7"
-                  />
-                </svg>
-              </Link>
-              <h1 className="text-2xl font-bold text-gray-900">Cost Entry</h1>
+            <div className="flex items-center space-x-6">
+              {/* Logo and Brand */}
+              <div className="flex items-center space-x-3">
+                <img
+                  src="/HARVEST_GRID.png"
+                  alt="Harvest Grid Logo"
+                  className="h-8 w-auto"
+                />
+                <div className="flex flex-col">
+                  <h1 className="text-xl font-bold text-gray-900">
+                    Harvest Grid
+                  </h1>
+                  <div className="flex items-center space-x-2">
+                    <p className="text-xs text-gray-500">
+                      Cultivation Management System
+                    </p>
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                      Cost Entry
+                    </span>
+                  </div>
+                </div>
+              </div>
             </div>
             <div className="flex items-center space-x-6">
               <nav className="flex space-x-4">
@@ -247,7 +249,22 @@ export default function CostEntry() {
                   Facility
                 </Link>
               </nav>
-              <span className="text-sm text-gray-500">Manager</span>
+              <div className="flex items-center space-x-2 px-3 py-1 bg-gray-100 rounded-md">
+                <svg
+                  className="w-4 h-4 text-gray-600"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+                  />
+                </svg>
+                <span className="text-sm font-medium text-gray-700">Admin</span>
+              </div>
             </div>
           </div>
         </div>
@@ -295,12 +312,18 @@ export default function CostEntry() {
                 <option value="" className="text-gray-500">
                   Select a category
                 </option>
-                <option value="Nutrients">Nutrients</option>
-                <option value="Electricity">Electricity</option>
+                <option value="Clones">Clones</option>
+                <option value="Nutrients & Coco">Nutrients & Coco</option>
+                <option value="Testing">Testing</option>
+                <option value="Utilities">Utilities</option>
                 <option value="Labor">Labor</option>
-                <option value="Rent">Rent</option>
-                <option value="Equipment">Equipment</option>
+                <option value="Trimming">Trimming</option>
                 <option value="Supplies">Supplies</option>
+                <option value="Security">Security</option>
+                <option value="Equipment">Equipment</option>
+                <option value="Insurance">Insurance</option>
+                <option value="Taxes">Taxes</option>
+                <option value="Rent">Rent</option>
                 <option value="Other">Other</option>
               </select>
             </div>

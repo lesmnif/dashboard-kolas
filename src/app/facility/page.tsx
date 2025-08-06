@@ -16,6 +16,8 @@ interface Room {
   strain_name?: string;
   current_batch?: string;
   has_current_batch?: boolean;
+  batch_start_date?: string;
+  batch_end_date?: string;
 }
 
 interface Strain {
@@ -33,6 +35,7 @@ export default function Facility() {
   const [strains, setStrains] = useState<Strain[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [modalVisible, setModalVisible] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [newRoom, setNewRoom] = useState({
     name: "",
@@ -79,7 +82,7 @@ export default function Facility() {
         .select(
           `
             *,
-            batches!inner(batch_code, status),
+            batches(batch_code, status, start_date, expected_harvest),
             strains(name)
           `
         )
@@ -107,6 +110,8 @@ export default function Facility() {
               strain_name: room.strains?.name,
               current_batch: activeBatch?.batch_code || null,
               has_current_batch: !!activeBatch,
+              batch_start_date: activeBatch?.start_date || null,
+              batch_end_date: activeBatch?.expected_harvest || null,
             };
           }) || [];
 
@@ -144,7 +149,8 @@ export default function Facility() {
 
         // Reset form
         setNewRoom({ name: "", area: "", lights: "", strain_id: "" });
-        setShowAddModal(false);
+        setModalVisible(false);
+        setTimeout(() => setShowAddModal(false), 300);
       }
     } catch (error) {
       console.error("Error submitting form:", error);
@@ -202,34 +208,39 @@ export default function Facility() {
       : "text-gray-600 bg-gray-100";
   };
 
+  const formatDate = (dateString: string | null) => {
+    if (!dateString) return "—";
+    return new Date(dateString).toLocaleDateString();
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <header className="bg-white shadow-sm border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
-            <div className="flex items-center space-x-4">
-              <Link
-                href="/dashboard"
-                className="text-gray-500 hover:text-gray-700 transition-colors duration-200"
-              >
-                <svg
-                  className="w-5 h-5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M15 19l-7-7 7-7"
-                  />
-                </svg>
-              </Link>
-              <h1 className="text-2xl font-bold text-gray-900">
-                Facility Management
-              </h1>
+            <div className="flex items-center space-x-6">
+              {/* Logo and Brand */}
+              <div className="flex items-center space-x-3">
+                <img
+                  src="/HARVEST_GRID.png"
+                  alt="Harvest Grid Logo"
+                  className="h-8 w-auto"
+                />
+                <div className="flex flex-col">
+                  <h1 className="text-xl font-bold text-gray-900">
+                    Harvest Grid
+                  </h1>
+                  <div className="flex items-center space-x-2">
+                    <p className="text-xs text-gray-500">
+                      Cultivation Management System
+                    </p>
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                      Facility
+                    </span>
+                  </div>
+                </div>
+              </div>
             </div>
             <div className="flex items-center space-x-6">
               <nav className="flex space-x-4">
@@ -252,7 +263,22 @@ export default function Facility() {
                   Facility
                 </Link>
               </nav>
-              <span className="text-sm text-gray-500">Admin</span>
+              <div className="flex items-center space-x-2 px-3 py-1 bg-gray-100 rounded-md">
+                <svg
+                  className="w-4 h-4 text-gray-600"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+                  />
+                </svg>
+                <span className="text-sm font-medium text-gray-700">Admin</span>
+              </div>
             </div>
           </div>
         </div>
@@ -263,7 +289,10 @@ export default function Facility() {
         {/* Add Room Button */}
         <div className="mb-6">
           <button
-            onClick={() => setShowAddModal(true)}
+            onClick={() => {
+              setShowAddModal(true);
+              setTimeout(() => setModalVisible(true), 10);
+            }}
             className="inline-flex items-center hover:cursor-pointer px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200"
           >
             <svg
@@ -308,6 +337,12 @@ export default function Facility() {
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Current Batch
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Batch Start Date
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Estimated End Date
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Status
@@ -434,6 +469,12 @@ export default function Facility() {
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {room.current_batch || "—"}
                     </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {formatDate(room.batch_start_date || null)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {formatDate(room.batch_end_date || null)}
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span
                         className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(
@@ -483,19 +524,57 @@ export default function Facility() {
 
       {/* Add Room Modal */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-          <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
-            <div className="mt-3">
-              <h3 className="text-lg font-medium text-gray-900 mb-4">
-                Add New Room
-              </h3>
-              <form onSubmit={handleAddRoom} className="space-y-4">
+        <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
+          {/* Backdrop */}
+          <div className="absolute inset-0 bg-black bg-opacity-2 pointer-events-none"></div>
+          {/* Modal Container */}
+          <div className="relative z-10 pointer-events-none">
+            <div
+              className={`bg-white rounded-lg shadow-2xl max-w-md w-full mx-4 transform transition-all duration-300 ease-out pointer-events-auto ${
+                modalVisible
+                  ? "scale-100 opacity-100 translate-y-0"
+                  : "scale-95 opacity-0 translate-y-4"
+              }`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div className="flex items-center justify-between p-6 border-b border-gray-200">
+                <h3 className="text-lg font-semibold text-gray-900">
+                  Add New Room
+                </h3>
+                <button
+                  onClick={() => {
+                    setModalVisible(false);
+                    setTimeout(() => setShowAddModal(false), 300);
+                  }}
+                  className="text-gray-400 hover:text-gray-600 transition-colors duration-200"
+                  aria-label="Close modal"
+                  title="Close modal"
+                >
+                  <svg
+                    className="w-6 h-6"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M6 18L18 6M6 6l12 12"
+                    />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <form onSubmit={handleAddRoom} className="p-6 space-y-4">
                 <div>
                   <label
                     htmlFor="name"
-                    className="block text-sm font-medium text-gray-700 mb-1"
+                    className="block text-sm font-medium text-gray-700 mb-2"
                   >
-                    Room Name
+                    Room Name *
                   </label>
                   <input
                     type="text"
@@ -505,15 +584,17 @@ export default function Facility() {
                       setNewRoom({ ...newRoom, name: e.target.value })
                     }
                     required
+                    placeholder="Enter room name"
                     className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 text-gray-900"
                   />
                 </div>
+
                 <div>
                   <label
                     htmlFor="area"
-                    className="block text-sm font-medium text-gray-700 mb-1"
+                    className="block text-sm font-medium text-gray-700 mb-2"
                   >
-                    Area (m²)
+                    Area (m²) *
                   </label>
                   <input
                     type="number"
@@ -525,15 +606,17 @@ export default function Facility() {
                     required
                     min="0"
                     step="0.1"
+                    placeholder="Enter area in square meters"
                     className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 text-gray-900"
                   />
                 </div>
+
                 <div>
                   <label
                     htmlFor="lights"
-                    className="block text-sm font-medium text-gray-700 mb-1"
+                    className="block text-sm font-medium text-gray-700 mb-2"
                   >
-                    Lights
+                    Number of Lights *
                   </label>
                   <input
                     type="number"
@@ -544,6 +627,7 @@ export default function Facility() {
                     }
                     required
                     min="0"
+                    placeholder="Enter number of lights"
                     className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 text-gray-900"
                   />
                 </div>
@@ -551,9 +635,9 @@ export default function Facility() {
                 <div>
                   <label
                     htmlFor="strain_id"
-                    className="block text-sm font-medium text-gray-700 mb-1"
+                    className="block text-sm font-medium text-gray-700 mb-2"
                   >
-                    Assigned Strain (Optional)
+                    Assigned Strain
                   </label>
                   <select
                     id="strain_id"
@@ -574,17 +658,21 @@ export default function Facility() {
                   </select>
                 </div>
 
-                <div className="flex justify-end space-x-3 pt-4">
+                {/* Modal Footer */}
+                <div className="flex justify-end space-x-3 pt-6 border-t border-gray-200">
                   <button
                     type="button"
-                    onClick={() => setShowAddModal(false)}
-                    className="px-4 py-2 text-sm hover:cursor-pointer font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
+                    onClick={() => {
+                      setModalVisible(false);
+                      setTimeout(() => setShowAddModal(false), 300);
+                    }}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 transition-colors duration-200"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    className="px-4 py-2 text-sm font-medium text-white bg-green-600 border border-transparent rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                    className="px-4 py-2 text-sm font-medium text-white bg-green-600 border border-transparent rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200"
                   >
                     Add Room
                   </button>

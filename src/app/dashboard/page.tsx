@@ -291,7 +291,29 @@ export default function Dashboard() {
       <header className="bg-white shadow-sm border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
-            <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+            <div className="flex items-center space-x-6">
+              {/* Logo and Brand */}
+              <div className="flex items-center space-x-3">
+                <img
+                  src="/HARVEST_GRID.png"
+                  alt="Harvest Grid Logo"
+                  className="h-8 w-auto"
+                />
+                <div className="flex flex-col">
+                  <h1 className="text-xl font-bold text-gray-900">
+                    Harvest Grid
+                  </h1>
+                  <div className="flex items-center space-x-2">
+                    <p className="text-xs text-gray-500">
+                      Cultivation Management System
+                    </p>
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                      Dashboard
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
             <div className="flex items-center space-x-6">
               <nav className="flex space-x-4">
                 <Link
@@ -313,7 +335,22 @@ export default function Dashboard() {
                   Facility
                 </Link>
               </nav>
-              <span className="text-sm text-gray-500">Manager</span>
+              <div className="flex items-center space-x-2 px-3 py-1 bg-gray-100 rounded-md">
+                <svg
+                  className="w-4 h-4 text-gray-600"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+                  />
+                </svg>
+                <span className="text-sm font-medium text-gray-700">Admin</span>
+              </div>
             </div>
           </div>
         </div>
@@ -481,9 +518,17 @@ export default function Dashboard() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
           {/* Cost Breakdown Chart */}
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">
-              Cost Breakdown by Category
-            </h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">
+                Cost Breakdown by Category
+              </h3>
+              <div className="text-sm text-gray-500">
+                Total: $
+                {dashboardData.costBreakdown
+                  .reduce((sum, item) => sum + item.value, 0)
+                  .toLocaleString()}
+              </div>
+            </div>
             <div className="h-64">
               {loading ? (
                 <div className="h-full flex items-center justify-center">
@@ -509,17 +554,31 @@ export default function Dashboard() {
                           key={`cell-${index}`}
                           fill={
                             [
-                              "#0088FE",
-                              "#00C49F",
-                              "#FFBB28",
-                              "#FF8042",
-                              "#8884D8",
-                            ][index % 5]
+                              "#10B981", // Green
+                              "#3B82F6", // Blue
+                              "#F59E0B", // Amber
+                              "#EF4444", // Red
+                              "#8B5CF6", // Purple
+                              "#06B6D4", // Cyan
+                              "#F97316", // Orange
+                              "#EC4899", // Pink
+                            ][index % 8]
                           }
                         />
                       ))}
                     </Pie>
-                    <Tooltip formatter={(value) => [`$${value}`, "Amount"]} />
+                    <Tooltip
+                      formatter={(value) => [
+                        `$${Number(value).toLocaleString()}`,
+                        "Amount",
+                      ]}
+                      contentStyle={{
+                        backgroundColor: "white",
+                        border: "1px solid #e5e7eb",
+                        borderRadius: "8px",
+                        boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
+                      }}
+                    />
                   </PieChart>
                 </ResponsiveContainer>
               ) : (
@@ -532,9 +591,24 @@ export default function Dashboard() {
 
           {/* Monthly Costs Chart */}
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">
-              Monthly Cost Trends
-            </h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">
+                Monthly Cost Trends
+              </h3>
+              <div className="text-sm text-gray-500">
+                {dashboardData.monthlyCosts.length > 0 && (
+                  <>
+                    Avg: $
+                    {(
+                      dashboardData.monthlyCosts.reduce(
+                        (sum, item) => sum + item.cost,
+                        0
+                      ) / dashboardData.monthlyCosts.length
+                    ).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                  </>
+                )}
+              </div>
+            </div>
             <div className="h-64">
               {loading ? (
                 <div className="h-full flex items-center justify-center">
@@ -543,16 +617,38 @@ export default function Dashboard() {
               ) : dashboardData.monthlyCosts.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={dashboardData.monthlyCosts}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="month" />
-                    <YAxis />
-                    <Tooltip formatter={(value) => [`$${value}`, "Cost"]} />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                    <XAxis
+                      dataKey="month"
+                      tick={{ fontSize: 12 }}
+                      axisLine={{ stroke: "#e5e7eb" }}
+                    />
+                    <YAxis
+                      tick={{ fontSize: 12 }}
+                      axisLine={{ stroke: "#e5e7eb" }}
+                      tickFormatter={(value) =>
+                        `$${(value / 1000).toFixed(0)}k`
+                      }
+                    />
+                    <Tooltip
+                      formatter={(value) => [
+                        `$${Number(value).toLocaleString()}`,
+                        "Cost",
+                      ]}
+                      contentStyle={{
+                        backgroundColor: "white",
+                        border: "1px solid #e5e7eb",
+                        borderRadius: "8px",
+                        boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
+                      }}
+                    />
                     <Area
                       type="monotone"
                       dataKey="cost"
-                      stroke="#8884d8"
-                      fill="#8884d8"
-                      fillOpacity={0.3}
+                      stroke="#10B981"
+                      fill="#10B981"
+                      fillOpacity={0.2}
+                      strokeWidth={2}
                     />
                   </AreaChart>
                 </ResponsiveContainer>
@@ -569,9 +665,16 @@ export default function Dashboard() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
           {/* Room Utilization Chart */}
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">
-              Room Utilization
-            </h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">
+                Room Utilization
+              </h3>
+              <div className="text-sm text-gray-500">
+                {dashboardData.roomUtilization.length > 0 && (
+                  <>Total: {dashboardData.roomUtilization.length} rooms</>
+                )}
+              </div>
+            </div>
             <div className="h-64">
               {loading ? (
                 <div className="h-full flex items-center justify-center">
@@ -580,28 +683,49 @@ export default function Dashboard() {
               ) : dashboardData.roomUtilization.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={dashboardData.roomUtilization}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                    <XAxis
+                      dataKey="name"
+                      tick={{ fontSize: 12 }}
+                      axisLine={{ stroke: "#e5e7eb" }}
+                    />
+                    <YAxis
+                      tick={{ fontSize: 12 }}
+                      axisLine={{ stroke: "#e5e7eb" }}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "white",
+                        border: "1px solid #e5e7eb",
+                        borderRadius: "8px",
+                        boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
+                      }}
+                    />
+                    <Legend
+                      wrapperStyle={{
+                        paddingTop: "10px",
+                      }}
+                    />
                     <Bar
                       dataKey="active"
                       stackId="a"
                       fill="#10B981"
                       name="Active"
+                      radius={[2, 2, 0, 0]}
                     />
                     <Bar
                       dataKey="inactive"
                       stackId="a"
                       fill="#6B7280"
                       name="Inactive"
+                      radius={[2, 2, 0, 0]}
                     />
                     <Bar
                       dataKey="archived"
                       stackId="a"
                       fill="#EF4444"
                       name="Archived"
+                      radius={[2, 2, 0, 0]}
                     />
                   </BarChart>
                 </ResponsiveContainer>
@@ -615,9 +739,23 @@ export default function Dashboard() {
 
           {/* Category Trends Chart */}
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">
-              Cost Categories Over Time
-            </h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">
+                Cost Categories Over Time
+              </h3>
+              <div className="text-sm text-gray-500">
+                {dashboardData.categoryTrends.length > 0 && (
+                  <>
+                    {
+                      Object.keys(dashboardData.categoryTrends[0] || {}).filter(
+                        (key) => key !== "month"
+                      ).length
+                    }{" "}
+                    categories
+                  </>
+                )}
+              </div>
+            </div>
             <div className="h-64">
               {loading ? (
                 <div className="h-full flex items-center justify-center">
@@ -626,11 +764,36 @@ export default function Dashboard() {
               ) : dashboardData.categoryTrends.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={dashboardData.categoryTrends}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="month" />
-                    <YAxis />
-                    <Tooltip formatter={(value) => [`$${value}`, "Cost"]} />
-                    <Legend />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                    <XAxis
+                      dataKey="month"
+                      tick={{ fontSize: 12 }}
+                      axisLine={{ stroke: "#e5e7eb" }}
+                    />
+                    <YAxis
+                      tick={{ fontSize: 12 }}
+                      axisLine={{ stroke: "#e5e7eb" }}
+                      tickFormatter={(value) =>
+                        `$${(value / 1000).toFixed(0)}k`
+                      }
+                    />
+                    <Tooltip
+                      formatter={(value) => [
+                        `$${Number(value).toLocaleString()}`,
+                        "Cost",
+                      ]}
+                      contentStyle={{
+                        backgroundColor: "white",
+                        border: "1px solid #e5e7eb",
+                        borderRadius: "8px",
+                        boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
+                      }}
+                    />
+                    <Legend
+                      wrapperStyle={{
+                        paddingTop: "10px",
+                      }}
+                    />
                     {Object.keys(dashboardData.categoryTrends[0] || {})
                       .filter((key) => key !== "month")
                       .map((category, index) => (
@@ -640,14 +803,23 @@ export default function Dashboard() {
                           dataKey={category}
                           stroke={
                             [
-                              "#0088FE",
-                              "#00C49F",
-                              "#FFBB28",
-                              "#FF8042",
-                              "#8884D8",
-                            ][index % 5]
+                              "#10B981", // Green
+                              "#3B82F6", // Blue
+                              "#F59E0B", // Amber
+                              "#EF4444", // Red
+                              "#8B5CF6", // Purple
+                              "#06B6D4", // Cyan
+                              "#F97316", // Orange
+                              "#EC4899", // Pink
+                            ][index % 8]
                           }
                           strokeWidth={2}
+                          dot={{ fill: "#10B981", strokeWidth: 2, r: 4 }}
+                          activeDot={{
+                            r: 6,
+                            stroke: "#10B981",
+                            strokeWidth: 2,
+                          }}
                         />
                       ))}
                   </LineChart>
