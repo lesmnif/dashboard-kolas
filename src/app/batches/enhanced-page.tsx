@@ -74,7 +74,7 @@ export default function EnhancedBatches() {
     start_date: "",
     expected_harvest: "",
     flip_date: "",
-    status: "planned" as const,
+    status: "planned" as "planned" | "active" | "harvested" | "archived",
   });
 
   const [batchStrains, setBatchStrains] = useState<BatchStrain[]>([]);
@@ -765,7 +765,7 @@ export default function EnhancedBatches() {
                           {formatDate(batch.start_date)}
                         </td>
                         <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {formatDate(batch.flip_date)}
+                          {formatDate(batch.flip_date || null)}
                         </td>
                         <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
                           <div>
@@ -939,6 +939,8 @@ export default function EnhancedBatches() {
                       }
                       className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 text-gray-900 bg-white"
                       required
+                      aria-label="Batch start date"
+                      title="Batch start date"
                     />
                   </div>
 
@@ -956,6 +958,8 @@ export default function EnhancedBatches() {
                         })
                       }
                       className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 text-gray-900 bg-white"
+                      aria-label="Expected harvest date"
+                      title="Expected harvest date"
                     />
                   </div>
 
@@ -968,7 +972,11 @@ export default function EnhancedBatches() {
                       onChange={(e) =>
                         setNewBatch({
                           ...newBatch,
-                          status: e.target.value as Batch["status"],
+                          status: e.target.value as
+                            | "planned"
+                            | "active"
+                            | "harvested"
+                            | "archived",
                         })
                       }
                       className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 text-gray-900 bg-white"
