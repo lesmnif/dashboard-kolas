@@ -416,7 +416,7 @@ export default function Dashboard() {
                 <img
                   src="/HARVEST_GRID.png"
                   alt="Harvest Grid Logo"
-                  className="h-8 w-auto"
+                  className="h-14 w-auto"
                 />
                 <div className="flex flex-col">
                   <h1 className="text-xl font-bold text-gray-900">

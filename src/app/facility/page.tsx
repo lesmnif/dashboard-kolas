@@ -3,75 +3,42 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { createClient } from "@/utils/supabase/client";
+import { motion, AnimatePresence } from "framer-motion";
 
 interface Room {
   id: string;
   name: string;
-  area: number | null;
   lights: number | null;
   status: "active" | "inactive" | "archived";
-  strain_id: string | null;
   created_at: string;
   updated_at: string;
-  strain_name?: string;
   current_batch?: string;
   has_current_batch?: boolean;
   batch_start_date?: string;
   batch_end_date?: string;
 }
 
-interface Strain {
-  id: string;
-  strain_code: string | null;
-  name: string;
-  class: string | null;
-  abbreviation: string | null;
-}
-
 export default function Facility() {
   const supabase = createClient();
 
   const [rooms, setRooms] = useState<Room[]>([]);
-  const [strains, setStrains] = useState<Strain[]>([]);
+
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [showBatchModal, setShowBatchModal] = useState(false);
+  const [selectedBatch, setSelectedBatch] = useState<any>(null);
+  const [batchLoading, setBatchLoading] = useState(false);
+
   const [newRoom, setNewRoom] = useState({
     name: "",
-    area: "",
     lights: "",
-    strain_id: "",
   });
 
   // Load rooms on component mount
   useEffect(() => {
-    loadRoomsAndStrains();
+    loadRooms();
   }, []);
-
-  const loadRoomsAndStrains = async () => {
-    try {
-      console.log("Loading rooms and strains...");
-
-      // Load strains
-      const { data: strainsData, error: strainsError } = await supabase
-        .from("strains")
-        .select("id, strain_code, name, class, abbreviation")
-        .order("name");
-
-      if (strainsError) {
-        console.error("Error loading strains:", strainsError);
-      } else {
-        console.log("Strains loaded:", strainsData);
-        setStrains(strainsData || []);
-      }
-
-      // Load rooms with strain info
-      await loadRooms();
-    } catch (error) {
-      console.error("Error loading data:", error);
-    }
-  };
 
   const loadRooms = async () => {
     try {
@@ -82,8 +49,7 @@ export default function Facility() {
         .select(
           `
             *,
-            batches(batch_code, status, start_date, expected_harvest),
-            strains(name)
+            batches(batch_code, status, start_date, expected_harvest)
           `
         )
         .order("name");
@@ -107,7 +73,6 @@ export default function Facility() {
 
             return {
               ...room,
-              strain_name: room.strains?.name,
               current_batch: activeBatch?.batch_code || null,
               has_current_batch: !!activeBatch,
               batch_start_date: activeBatch?.start_date || null,
@@ -132,9 +97,7 @@ export default function Facility() {
         .from("rooms")
         .insert({
           name: newRoom.name,
-          area: parseFloat(newRoom.area) || null,
           lights: parseInt(newRoom.lights) || null,
-          strain_id: newRoom.strain_id || null,
           status: "active",
         })
         .select()
@@ -148,7 +111,7 @@ export default function Facility() {
         await loadRooms();
 
         // Reset form
-        setNewRoom({ name: "", area: "", lights: "", strain_id: "" });
+        setNewRoom({ name: "", lights: "" });
         setModalVisible(false);
         setTimeout(() => setShowAddModal(false), 300);
       }
@@ -178,27 +141,53 @@ export default function Facility() {
     }
   };
 
-  const handleEditRoom = async (
-    id: string,
-    field: keyof Room,
-    value: string | number | null
-  ) => {
+  const handleBatchClick = async (room: Room) => {
+    // Show modal immediately with basic info
+    setSelectedBatch({
+      batch_code: room.current_batch,
+      rooms: { name: room.name },
+      start_date: room.batch_start_date,
+      expected_harvest: room.batch_end_date,
+      status: "active", // Default status since we only show active batches
+    });
+    setShowBatchModal(true);
+    setBatchLoading(true);
+
     try {
-      const { error } = await supabase
-        .from("rooms")
-        .update({ [field]: value })
-        .eq("id", id);
+      // Fetch detailed batch information in the background
+      const { data: batchData, error } = await supabase
+        .from("batches")
+        .select(
+          `
+          *,
+          rooms(name, lights),
+          strains(name, strain_code, class),
+          batch_strains(
+            id,
+            strain_id,
+            lights_assigned,
+            percentage,
+            strains(name, strain_code)
+          )
+        `
+        )
+        .eq("room_id", room.id)
+        .eq("status", "active")
+        .single();
 
       if (error) {
-        console.error("Error updating room:", error);
-        alert("Error updating room. Please try again.");
-      } else {
-        // Reload rooms to get the latest data
-        await loadRooms();
+        console.error("Error loading batch details:", error);
+        setBatchLoading(false);
+        // Keep the modal open with basic info, just show an error for detailed data
+        return;
       }
+
+      setSelectedBatch(batchData);
     } catch (error) {
-      console.error("Error updating room:", error);
-      alert("Error updating room. Please try again.");
+      console.error("Error loading batch details:", error);
+      // Keep the modal open with basic info
+    } finally {
+      setBatchLoading(false);
     }
   };
 
@@ -210,7 +199,45 @@ export default function Facility() {
 
   const formatDate = (dateString: string | null) => {
     if (!dateString) return "—";
-    return new Date(dateString).toLocaleDateString();
+
+    const date = new Date(dateString);
+
+    // Get ordinal suffix for day (1st, 2nd, 3rd, 4th, etc.)
+    const getOrdinalSuffix = (day: number) => {
+      if (day > 3 && day < 21) return "th";
+      switch (day % 10) {
+        case 1:
+          return "st";
+        case 2:
+          return "nd";
+        case 3:
+          return "rd";
+        default:
+          return "th";
+      }
+    };
+
+    const monthNames = [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec",
+    ];
+
+    const month = monthNames[date.getMonth()];
+    const day = date.getDate();
+    const year = date.getFullYear();
+    const ordinalSuffix = getOrdinalSuffix(day);
+
+    return `${month} ${day}${ordinalSuffix} ${year}`;
   };
 
   return (
@@ -225,7 +252,7 @@ export default function Facility() {
                 <img
                   src="/HARVEST_GRID.png"
                   alt="Harvest Grid Logo"
-                  className="h-8 w-auto"
+                  className="h-14 w-auto"
                 />
                 <div className="flex flex-col">
                   <h1 className="text-xl font-bold text-gray-900">
@@ -333,13 +360,7 @@ export default function Facility() {
                     Room Name
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Area (m²)
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Lights
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Assigned Strain
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Current Batch
@@ -362,118 +383,24 @@ export default function Facility() {
                 {rooms.map((room) => (
                   <tr key={room.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {editingId === room.id ? (
-                        <input
-                          type="text"
-                          value={room.name}
-                          onChange={(e) =>
-                            handleEditRoom(room.id, "name", e.target.value)
-                          }
-                          onBlur={() => setEditingId(null)}
-                          className="w-full px-2 py-1 border border-gray-300 rounded text-gray-900"
-                          autoFocus
-                          aria-label="Edit room name"
-                          title="Edit room name"
-                        />
-                      ) : (
-                        <span
-                          className="cursor-pointer hover:text-green-600"
-                          onClick={() => setEditingId(room.id)}
-                        >
-                          {room.name}
-                        </span>
-                      )}
+                      {room.name}
                     </td>
+
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {editingId === room.id ? (
-                        <input
-                          type="number"
-                          value={room.area || ""}
-                          onChange={(e) =>
-                            handleEditRoom(
-                              room.id,
-                              "area",
-                              parseFloat(e.target.value) || null
-                            )
-                          }
-                          onBlur={() => setEditingId(null)}
-                          className="w-20 px-2 py-1 border border-gray-300 rounded text-gray-900"
-                          aria-label="Edit room area"
-                          title="Edit room area"
-                        />
-                      ) : (
-                        <span
-                          className="cursor-pointer hover:text-green-600"
-                          onClick={() => setEditingId(room.id)}
-                        >
-                          {room.area || "—"}
-                        </span>
-                      )}
+                      {room.lights || "—"}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {editingId === room.id ? (
-                        <input
-                          type="number"
-                          value={room.lights || ""}
-                          onChange={(e) =>
-                            handleEditRoom(
-                              room.id,
-                              "lights",
-                              parseInt(e.target.value) || null
-                            )
-                          }
-                          onBlur={() => setEditingId(null)}
-                          className="w-16 px-2 py-1 border border-gray-300 rounded text-gray-900"
-                          aria-label="Edit room lights"
-                          title="Edit room lights"
-                        />
-                      ) : (
-                        <span
-                          className="cursor-pointer hover:text-green-600"
-                          onClick={() => setEditingId(room.id)}
-                        >
-                          {room.lights || "—"}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {editingId === room.id ? (
-                        <select
-                          value={room.strain_id || ""}
-                          onChange={(e) =>
-                            handleEditRoom(
-                              room.id,
-                              "strain_id",
-                              e.target.value || null
-                            )
-                          }
-                          onBlur={() => setEditingId(null)}
-                          className="w-full px-2 py-1 border border-gray-300 rounded text-gray-900"
-                          aria-label="Edit assigned strain"
-                          title="Edit assigned strain"
-                        >
-                          <option value="">No strain assigned</option>
-                          {strains.map((strain) => (
-                            <option key={strain.id} value={strain.id}>
-                              {strain.name}{" "}
-                              {strain.strain_code
-                                ? `(${strain.strain_code})`
-                                : ""}{" "}
-                              {strain.class ? `[${strain.class}]` : ""}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <span
-                          className="cursor-pointer hover:text-green-600"
-                          onClick={() => setEditingId(room.id)}
-                        >
-                          {room.strain_name || "—"}
-                        </span>
-                      )}
-                    </td>
+
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {room.current_batch || "—"}
+                      {room.current_batch ? (
+                        <button
+                          onClick={() => handleBatchClick(room)}
+                          className="text-blue-600 hover:text-blue-800 hover:underline focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 rounded"
+                        >
+                          {room.current_batch}
+                        </button>
+                      ) : (
+                        "—"
+                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {formatDate(room.batch_start_date || null)}
@@ -597,28 +524,6 @@ export default function Facility() {
 
                 <div>
                   <label
-                    htmlFor="area"
-                    className="block text-sm font-medium text-gray-700 mb-2"
-                  >
-                    Area (m²) *
-                  </label>
-                  <input
-                    type="number"
-                    id="area"
-                    value={newRoom.area}
-                    onChange={(e) =>
-                      setNewRoom({ ...newRoom, area: e.target.value })
-                    }
-                    required
-                    min="0"
-                    step="0.1"
-                    placeholder="Enter area in square meters"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 text-gray-900"
-                  />
-                </div>
-
-                <div>
-                  <label
                     htmlFor="lights"
                     className="block text-sm font-medium text-gray-700 mb-2"
                   >
@@ -636,32 +541,6 @@ export default function Facility() {
                     placeholder="Enter number of lights"
                     className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 text-gray-900"
                   />
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="strain_id"
-                    className="block text-sm font-medium text-gray-700 mb-2"
-                  >
-                    Assigned Strain
-                  </label>
-                  <select
-                    id="strain_id"
-                    value={newRoom.strain_id}
-                    onChange={(e) =>
-                      setNewRoom({ ...newRoom, strain_id: e.target.value })
-                    }
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 text-gray-900"
-                  >
-                    <option value="">Select a strain (optional)</option>
-                    {strains.map((strain) => (
-                      <option key={strain.id} value={strain.id}>
-                        {strain.name}{" "}
-                        {strain.strain_code ? `(${strain.strain_code})` : ""}{" "}
-                        {strain.class ? `[${strain.class}]` : ""}
-                      </option>
-                    ))}
-                  </select>
                 </div>
 
                 {/* Modal Footer */}
@@ -688,6 +567,249 @@ export default function Facility() {
           </div>
         </div>
       )}
+
+      {/* Batch Details Modal */}
+      <AnimatePresence>
+        {showBatchModal && selectedBatch && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 bg-black bg-opacity-20 backdrop-blur-sm overflow-y-auto h-full w-full z-50 flex items-start justify-center pt-16 pb-8"
+            onClick={() => {
+              setShowBatchModal(false);
+              setSelectedBatch(null);
+            }}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.97, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.97, y: 10 }}
+              transition={{
+                type: "spring",
+                damping: 30,
+                stiffness: 400,
+                duration: 0.2,
+              }}
+              className="relative w-11/12 md:w-3/4 lg:w-1/2 max-w-4xl mx-4 bg-white rounded-2xl shadow-2xl border border-gray-100"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div className="flex justify-between items-center p-6 pb-4 border-b border-gray-100">
+                <div>
+                  <h3 className="text-2xl font-bold text-gray-900">
+                    Batch Details
+                  </h3>
+                  <p className="text-sm text-gray-500 mt-1 font-medium">
+                    {selectedBatch.batch_code}
+                  </p>
+                </div>
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => {
+                    setShowBatchModal(false);
+                    setSelectedBatch(null);
+                  }}
+                  className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition-all duration-200"
+                  aria-label="Close modal"
+                >
+                  <svg
+                    className="w-6 h-6"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M6 18L18 6M6 6l12 12"
+                    />
+                  </svg>
+                </motion.button>
+              </div>
+
+              {/* Modal Content */}
+              <div className="p-6 space-y-6">
+                {/* Basic Info Grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <div className="space-y-4">
+                    <div className="bg-gradient-to-br from-gray-50 to-gray-100 p-5 rounded-xl border border-gray-200">
+                      <h4 className="text-base font-semibold text-gray-900 mb-4 flex items-center">
+                        <div className="w-2 h-2 bg-green-500 rounded-full mr-3"></div>
+                        Batch Information
+                      </h4>
+                      <div className="space-y-3">
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm text-gray-600">Code:</span>
+                          <span className="text-sm font-semibold text-gray-900 bg-white px-3 py-1 rounded-full">
+                            {selectedBatch.batch_code}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm text-gray-600">Status:</span>
+                          <span
+                            className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold ${
+                              selectedBatch.status === "active"
+                                ? "bg-green-100 text-green-800 border border-green-200"
+                                : "bg-gray-100 text-gray-800 border border-gray-200"
+                            }`}
+                          >
+                            {selectedBatch.status
+                              ? selectedBatch.status.charAt(0).toUpperCase() +
+                                selectedBatch.status.slice(1)
+                              : "Active"}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm text-gray-600">Room:</span>
+                          <span className="text-sm font-semibold text-gray-900 bg-white px-3 py-1 rounded-full">
+                            {selectedBatch.rooms?.name}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-5 rounded-xl border border-blue-200">
+                      <h4 className="text-base font-semibold text-gray-900 mb-4 flex items-center">
+                        <div className="w-2 h-2 bg-blue-500 rounded-full mr-3"></div>
+                        Timeline
+                      </h4>
+                      <div className="space-y-3">
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm text-gray-600">
+                            Start Date:
+                          </span>
+                          <span className="text-sm font-semibold text-gray-900 bg-white px-3 py-1 rounded-full">
+                            {formatDate(selectedBatch.start_date)}
+                          </span>
+                        </div>
+                        {selectedBatch.expected_harvest && (
+                          <div className="flex justify-between items-center">
+                            <span className="text-sm text-gray-600">
+                              Expected Harvest:
+                            </span>
+                            <span className="text-sm font-semibold text-gray-900 bg-white px-3 py-1 rounded-full">
+                              {formatDate(selectedBatch.expected_harvest)}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="bg-gradient-to-br from-purple-50 to-purple-100 p-5 rounded-xl border border-purple-200">
+                      <h4 className="text-base font-semibold text-gray-900 mb-4 flex items-center">
+                        <div className="w-2 h-2 bg-purple-500 rounded-full mr-3"></div>
+                        Strain Information
+                      </h4>
+                      {batchLoading ? (
+                        <div className="space-y-3">
+                          <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm animate-pulse">
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <div className="h-4 bg-gray-200 rounded w-32 mb-2"></div>
+                                <div className="h-3 bg-gray-200 rounded w-20"></div>
+                              </div>
+                              <div className="text-right">
+                                <div className="h-6 bg-gray-200 rounded w-16 mb-1"></div>
+                                <div className="h-6 bg-gray-200 rounded w-12"></div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ) : selectedBatch.batch_strains &&
+                        selectedBatch.batch_strains.length > 0 ? (
+                        <div className="space-y-3">
+                          {selectedBatch.batch_strains.map(
+                            (assignment: any, index: number) => (
+                              <div
+                                key={index}
+                                className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm"
+                              >
+                                <div className="flex justify-between items-start">
+                                  <div>
+                                    <p className="text-sm font-semibold text-gray-900">
+                                      {assignment.strains?.name ||
+                                        "Unknown Strain"}
+                                    </p>
+                                    {assignment.strains?.strain_code && (
+                                      <p className="text-xs text-gray-600 mt-1">
+                                        Code: {assignment.strains.strain_code}
+                                      </p>
+                                    )}
+                                  </div>
+                                  <div className="text-right">
+                                    <div className="bg-green-100 text-green-800 px-2 py-1 rounded text-xs font-medium mb-1">
+                                      {assignment.lights_assigned} lights
+                                    </div>
+                                    <div className="bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs font-medium">
+                                      {assignment.percentage}%
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            )
+                          )}
+                        </div>
+                      ) : selectedBatch.strains ? (
+                        <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
+                          <p className="text-sm font-semibold text-gray-900">
+                            {selectedBatch.strains.name}
+                          </p>
+                          {selectedBatch.strains.strain_code && (
+                            <p className="text-xs text-gray-600 mt-1">
+                              Code: {selectedBatch.strains.strain_code}
+                            </p>
+                          )}
+                          {selectedBatch.strains.class && (
+                            <p className="text-xs text-gray-600 mt-1">
+                              Class: {selectedBatch.strains.class}
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-gray-500 italic">
+                          No strain information available
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex justify-end space-x-3 pt-6 border-t border-gray-100">
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => {
+                      setShowBatchModal(false);
+                      setSelectedBatch(null);
+                    }}
+                    className="px-6 py-3 text-sm font-medium text-gray-700 bg-white border-2 border-gray-200 rounded-xl hover:bg-gray-50 hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-all duration-200"
+                  >
+                    Close
+                  </motion.button>
+                  <motion.div
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                  >
+                    <Link
+                      href="/batches"
+                      className="inline-block px-6 py-3 text-sm font-medium text-white bg-gradient-to-r from-green-600 to-green-700 border border-transparent rounded-xl hover:from-green-700 hover:to-green-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 shadow-lg hover:shadow-xl transition-all duration-200"
+                    >
+                      Go to Batches
+                    </Link>
+                  </motion.div>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
