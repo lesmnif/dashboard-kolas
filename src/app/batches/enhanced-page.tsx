@@ -116,6 +116,8 @@ export default function EnhancedBatches() {
     null
   );
   const [harvestDataSaved, setHarvestDataSaved] = useState(false);
+  const [viewingExistingHarvest, setViewingExistingHarvest] = useState(false);
+  const [activeFilter, setActiveFilter] = useState<string>("all");
 
   // Load data on component mount
   useEffect(() => {
@@ -296,6 +298,25 @@ export default function EnhancedBatches() {
       return;
     }
 
+    // Check if there are any lights available
+    if (newBatch.room_id) {
+      const room = rooms.find((r) => r.id === newBatch.room_id);
+      if (room && room.lights) {
+        const usedLights = batchStrains.reduce(
+          (sum, strain) => sum + strain.lights_assigned,
+          0
+        );
+        const remainingLights = room.lights - usedLights;
+
+        if (remainingLights <= 0) {
+          alert(
+            "No lights available. All lights have been assigned to strains."
+          );
+          return;
+        }
+      }
+    }
+
     const strain = strains.find((s) => s.id === selectedStrain);
     if (!strain) return;
 
@@ -328,15 +349,6 @@ export default function EnhancedBatches() {
       return false;
     }
 
-    const totalPercentage = batchStrains.reduce(
-      (sum, strain) => sum + strain.percentage,
-      0
-    );
-    if (totalPercentage > 100) {
-      alert("Total percentage cannot exceed 100%");
-      return false;
-    }
-
     const room = rooms.find((r) => r.id === newBatch.room_id);
     if (room) {
       const totalLights = batchStrains.reduce(
@@ -347,6 +359,17 @@ export default function EnhancedBatches() {
         alert(
           `Total lights assigned (${totalLights}) cannot exceed room capacity (${room.lights})`
         );
+        return false;
+      }
+
+      // Check if total percentage exceeds 100% (should be automatic but good to verify)
+      const totalPercentage = batchStrains.reduce(
+        (sum, strain) => sum + strain.percentage,
+        0
+      );
+      if (totalPercentage > 100.1) {
+        // Allow small rounding errors
+        alert("Total percentage cannot exceed 100%");
         return false;
       }
     }
@@ -500,6 +523,125 @@ export default function EnhancedBatches() {
     }
   };
 
+  const loadExistingHarvestData = async (batch: Batch) => {
+    try {
+      // First check if harvest data exists for this batch
+      const { data: existingData, error: checkError } = await supabase
+        .from("harvest_summaries")
+        .select("id")
+        .eq("batch_id", batch.id)
+        .maybeSingle();
+
+      if (checkError) {
+        console.error("Error checking for harvest data:", checkError);
+        return false;
+      }
+
+      if (!existingData) {
+        // No harvest data exists for this batch
+        return false;
+      }
+
+      // Load existing harvest summary
+      const { data: summaryData, error: summaryError } = await supabase
+        .from("harvest_summaries")
+        .select("*")
+        .eq("batch_id", batch.id)
+        .single();
+
+      if (summaryError) {
+        console.error("Error loading harvest summary:", summaryError);
+        return false;
+      }
+
+      // Load existing harvest details
+      const { data: detailsData, error: detailsError } = await supabase
+        .from("harvest_details")
+        .select("*")
+        .eq("harvest_summary_id", summaryData.id);
+
+      if (detailsError) {
+        console.error("Error loading harvest details:", detailsError);
+        return false;
+      }
+
+      // Convert details to harvest data format
+      const harvestDataFromDB: HarvestData[] =
+        detailsData?.map((detail) => ({
+          strain_id: detail.strain_id,
+          strain_name: detail.strain_name,
+          bigs_lbs: detail.bigs_lbs || 0,
+          smalls_lbs: detail.smalls_lbs || 0,
+          micros_lbs: detail.micros_lbs || 0,
+          bigs_price_per_lb: 0, // These aren't stored in DB, so we'll set to 0
+          smalls_price_per_lb: 0,
+          micros_price_per_lb: 0,
+        })) || [];
+
+      setHarvestData(harvestDataFromDB);
+
+      // Create harvest summary from saved data
+      const summary: HarvestSummary = {
+        total_harvest_lbs: summaryData.total_harvest_lbs,
+        yield_per_light: summaryData.yield_per_light,
+        total_revenue: 0, // We'll need to calculate this from the stored data
+        revenue_per_light: 0,
+        cost_to_grow: 0, // We'll need to recalculate this
+        profit_loss: 0,
+        cost_per_lb: 0,
+        net_income_per_lb: 0,
+        net_income_sales_ratio: 0,
+        harvest_data: harvestDataFromDB,
+      };
+
+      // Recalculate costs and other metrics
+      const costToGrow = await calculateCostToGrow(
+        batch.id,
+        batch.room_id || "",
+        batch.start_date
+      );
+
+      // Calculate revenue from stored harvest data (if we had price data)
+      const totalRevenue =
+        harvestDataFromDB.reduce(
+          (total, strain) =>
+            total + strain.bigs_lbs + strain.smalls_lbs + strain.micros_lbs,
+          0
+        ) * 100; // Assuming average $100/lb if no price data
+
+      const profitLoss = totalRevenue - costToGrow;
+      const costPerLb =
+        summary.total_harvest_lbs > 0
+          ? costToGrow / summary.total_harvest_lbs
+          : 0;
+      const netIncomePerLb =
+        summary.total_harvest_lbs > 0
+          ? profitLoss / summary.total_harvest_lbs
+          : 0;
+      const netIncomeSalesRatio =
+        totalRevenue > 0 ? (profitLoss / totalRevenue) * 100 : 0;
+
+      const updatedSummary: HarvestSummary = {
+        ...summary,
+        total_revenue: totalRevenue,
+        revenue_per_light: summary.yield_per_light * 100, // Estimate
+        cost_to_grow: costToGrow,
+        profit_loss: profitLoss,
+        cost_per_lb: costPerLb,
+        net_income_per_lb: netIncomePerLb,
+        net_income_sales_ratio: netIncomeSalesRatio,
+      };
+
+      setHarvestSummary(updatedSummary);
+      setHarvestDataSaved(true);
+      setViewingExistingHarvest(true);
+      return true;
+    } catch (error) {
+      console.error("Error loading existing harvest data:", error);
+      return false;
+    }
+  };
+
   const initializeHarvestData = (batch: Batch) => {
     // Initialize harvest data for each strain in the batch
     const initialData: HarvestData[] = [];
@@ -540,6 +682,7 @@ export default function EnhancedBatches() {
     setHarvestData(initialData);
     setHarvestSummary(null);
     setHarvestDataSaved(false);
+    setViewingExistingHarvest(false);
   };
 
   const updateHarvestData = (
@@ -659,7 +802,53 @@ export default function EnhancedBatches() {
     const summary = await calculateHarvestSummary();
 
     try {
-      // 1. First, save the harvest summary
+      // 0. First, clean up any existing harvest data for this batch
+      console.log(
+        "Cleaning up existing harvest data for batch:",
+        selectedBatchForHarvest.id
+      );
+
+      // Delete existing harvest data for this batch
+      // First get existing harvest summary IDs
+      const { data: existingSummaries, error: fetchError } = await supabase
+        .from("harvest_summaries")
+        .select("id")
+        .eq("batch_id", selectedBatchForHarvest.id);
+
+      if (fetchError) {
+        console.error("Error fetching existing harvest summaries:", fetchError);
+      }
+
+      // Delete existing harvest details first (due to foreign key constraints)
+      if (existingSummaries && existingSummaries.length > 0) {
+        const summaryIds = existingSummaries.map((s) => s.id);
+        const { error: deleteDetailsError } = await supabase
+          .from("harvest_details")
+          .delete()
+          .in("harvest_summary_id", summaryIds);
+
+        if (deleteDetailsError) {
+          console.error(
+            "Error deleting existing harvest details:",
+            deleteDetailsError
+          );
+        }
+      }
+
+      // Delete existing harvest summaries
+      const { error: deleteSummaryError } = await supabase
+        .from("harvest_summaries")
+        .delete()
+        .eq("batch_id", selectedBatchForHarvest.id);
+
+      if (deleteSummaryError) {
+        console.error(
+          "Error deleting existing harvest summary:",
+          deleteSummaryError
+        );
+      }
+
+      // 1. Now save the new harvest summary
       const { data: harvestSummaryData, error: summaryError } = await supabase
         .from("harvest_summaries")
         .insert({
@@ -774,6 +963,26 @@ export default function EnhancedBatches() {
     }
   };
 
+  const formatCurrency = (amount: number) => {
+    if (amount >= 1000000) {
+      return `$${(amount / 1000000).toFixed(1)}M`;
+    } else if (amount >= 1000) {
+      return `$${(amount / 1000).toFixed(1)}K`;
+    } else {
+      return `$${amount.toFixed(2)}`;
+    }
+  };
+
+  const formatNumber = (num: number, decimals: number = 1) => {
+    if (num >= 1000000) {
+      return `${(num / 1000000).toFixed(decimals)}M`;
+    } else if (num >= 1000) {
+      return `${(num / 1000).toFixed(decimals)}K`;
+    } else {
+      return num.toFixed(decimals);
+    }
+  };
+
   const formatDate = (dateString: string | null) => {
     if (!dateString) return "—";
 
@@ -815,6 +1024,13 @@ export default function EnhancedBatches() {
     const ordinalSuffix = getOrdinalSuffix(day);
 
     return `${month} ${day}${ordinalSuffix} ${year}`;
+  };
+
+  const getFilteredBatches = () => {
+    if (activeFilter === "all") {
+      return batches;
+    }
+    return batches.filter((batch) => batch.status === activeFilter);
   };
 
   const calculateDaysRemaining = (expectedHarvest: string | null) => {
@@ -944,12 +1160,27 @@ export default function EnhancedBatches() {
 
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <button
+            onClick={() => setActiveFilter("all")}
+            className={`bg-white rounded-lg shadow-sm border p-6 text-left transition-all duration-300 hover:shadow-lg cursor-pointer transform hover:scale-105 ${
+              activeFilter === "all"
+                ? "border-blue-500 bg-blue-50 shadow-md ring-2 ring-blue-200"
+                : "border-gray-200 hover:border-blue-300 hover:bg-blue-25"
+            }`}
+          >
             <div className="flex items-center">
               <div className="flex-shrink-0">
-                <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
+                <div
+                  className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all duration-200 ${
+                    activeFilter === "all"
+                      ? "bg-blue-200 scale-110"
+                      : "bg-blue-100"
+                  }`}
+                >
                   <svg
-                    className="w-5 h-5 text-blue-600"
+                    className={`w-5 h-5 transition-all duration-200 ${
+                      activeFilter === "all" ? "text-blue-700" : "text-blue-600"
+                    }`}
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -964,7 +1195,11 @@ export default function EnhancedBatches() {
                 </div>
               </div>
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-500">
+                <p
+                  className={`text-sm font-medium transition-colors duration-200 ${
+                    activeFilter === "all" ? "text-blue-700" : "text-gray-500"
+                  }`}
+                >
                   Total Batches
                 </p>
                 <p className="text-2xl font-bold text-gray-900">
@@ -972,14 +1207,31 @@ export default function EnhancedBatches() {
                 </p>
               </div>
             </div>
-          </div>
+          </button>
 
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <button
+            onClick={() => setActiveFilter("active")}
+            className={`bg-white rounded-lg shadow-sm border p-6 text-left transition-all duration-300 hover:shadow-lg cursor-pointer transform hover:scale-105 ${
+              activeFilter === "active"
+                ? "border-green-500 bg-green-50 shadow-md ring-2 ring-green-200"
+                : "border-gray-200 hover:border-green-300 hover:bg-green-25"
+            }`}
+          >
             <div className="flex items-center">
               <div className="flex-shrink-0">
-                <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center">
+                <div
+                  className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all duration-200 ${
+                    activeFilter === "active"
+                      ? "bg-green-200 scale-110"
+                      : "bg-green-100"
+                  }`}
+                >
                   <svg
-                    className="w-5 h-5 text-green-600"
+                    className={`w-5 h-5 transition-all duration-200 ${
+                      activeFilter === "active"
+                        ? "text-green-700"
+                        : "text-green-600"
+                    }`}
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -994,7 +1246,13 @@ export default function EnhancedBatches() {
                 </div>
               </div>
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-500">
+                <p
+                  className={`text-sm font-medium transition-colors duration-200 ${
+                    activeFilter === "active"
+                      ? "text-green-700"
+                      : "text-gray-500"
+                  }`}
+                >
                   Active Batches
                 </p>
                 <p className="text-2xl font-bold text-gray-900">
@@ -1004,14 +1262,31 @@ export default function EnhancedBatches() {
                 </p>
               </div>
             </div>
-          </div>
+          </button>
 
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <button
+            onClick={() => setActiveFilter("planned")}
+            className={`bg-white rounded-lg shadow-sm border p-6 text-left transition-all duration-300 hover:shadow-lg cursor-pointer transform hover:scale-105 ${
+              activeFilter === "planned"
+                ? "border-orange-500 bg-orange-50 shadow-md ring-2 ring-orange-200"
+                : "border-gray-200 hover:border-orange-300 hover:bg-orange-25"
+            }`}
+          >
             <div className="flex items-center">
               <div className="flex-shrink-0">
-                <div className="w-8 h-8 bg-orange-100 rounded-lg flex items-center justify-center">
+                <div
+                  className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all duration-200 ${
+                    activeFilter === "planned"
+                      ? "bg-orange-200 scale-110"
+                      : "bg-orange-100"
+                  }`}
+                >
                   <svg
-                    className="w-5 h-5 text-orange-600"
+                    className={`w-5 h-5 transition-all duration-200 ${
+                      activeFilter === "planned"
+                        ? "text-orange-700"
+                        : "text-orange-600"
+                    }`}
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -1026,7 +1301,13 @@ export default function EnhancedBatches() {
                 </div>
               </div>
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-500">
+                <p
+                  className={`text-sm font-medium transition-colors duration-200 ${
+                    activeFilter === "planned"
+                      ? "text-orange-700"
+                      : "text-gray-500"
+                  }`}
+                >
                   Planned Batches
                 </p>
                 <p className="text-2xl font-bold text-gray-900">
@@ -1036,14 +1317,31 @@ export default function EnhancedBatches() {
                 </p>
               </div>
             </div>
-          </div>
+          </button>
 
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <button
+            onClick={() => setActiveFilter("harvested")}
+            className={`bg-white rounded-lg shadow-sm border p-6 text-left transition-all duration-300 hover:shadow-lg cursor-pointer transform hover:scale-105 ${
+              activeFilter === "harvested"
+                ? "border-purple-500 bg-purple-50 shadow-md ring-2 ring-purple-200"
+                : "border-gray-200 hover:border-purple-300 hover:bg-purple-25"
+            }`}
+          >
             <div className="flex items-center">
               <div className="flex-shrink-0">
-                <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center">
+                <div
+                  className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all duration-200 ${
+                    activeFilter === "harvested"
+                      ? "bg-purple-200 scale-110"
+                      : "bg-purple-100"
+                  }`}
+                >
                   <svg
-                    className="w-5 h-5 text-purple-600"
+                    className={`w-5 h-5 transition-all duration-200 ${
+                      activeFilter === "harvested"
+                        ? "text-purple-700"
+                        : "text-purple-600"
+                    }`}
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -1058,7 +1356,15 @@ export default function EnhancedBatches() {
                 </div>
               </div>
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-500">Harvested</p>
+                <p
+                  className={`text-sm font-medium transition-colors duration-200 ${
+                    activeFilter === "harvested"
+                      ? "text-purple-700"
+                      : "text-gray-500"
+                  }`}
+                >
+                  Harvested
+                </p>
                 <p className="text-2xl font-bold text-gray-900">
                   {loading
                     ? "..."
@@ -1066,13 +1372,24 @@ export default function EnhancedBatches() {
                 </p>
               </div>
             </div>
-          </div>
+          </button>
         </div>
 
         {/* Batches Table */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200">
           <div className="px-6 py-4 border-b border-gray-200">
-            <h2 className="text-lg font-semibold text-gray-900">All Batches</h2>
+            <h2 className="text-lg font-semibold text-gray-900">
+              {activeFilter === "all" && "All Batches"}
+              {activeFilter === "active" && "Active Batches"}
+              {activeFilter === "planned" && "Planned Batches"}
+              {activeFilter === "harvested" && "Harvested Batches"}
+            </h2>
+            {activeFilter !== "all" && (
+              <p className="text-sm text-gray-600 mt-1">
+                Showing {getFilteredBatches().length} of {batches.length}{" "}
+                batches
+              </p>
+            )}
           </div>
           <div className="overflow-x-auto min-w-full">
             {loading ? (
@@ -1110,7 +1427,7 @@ export default function EnhancedBatches() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {batches.map((batch) => {
+                  {getFilteredBatches().map((batch) => {
                     return (
                       <tr key={batch.id} className="hover:bg-gray-50">
                         <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
@@ -1140,14 +1457,42 @@ export default function EnhancedBatches() {
                           {formatDate(batch.expected_harvest)}
                         </td>
                         <td className="px-4 py-4 whitespace-nowrap">
-                          <span
-                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(
-                              batch.status
-                            )}`}
-                          >
-                            {batch.status.charAt(0).toUpperCase() +
-                              batch.status.slice(1)}
-                          </span>
+                          {batch.status === "harvested" ? (
+                            <button
+                              onClick={async () => {
+                                setSelectedBatchForHarvest(batch);
+                                const success = await loadExistingHarvestData(
+                                  batch
+                                );
+                                if (success) {
+                                  setShowHarvestModal(true);
+                                } else {
+                                  alert(
+                                    "No harvest data found for this batch."
+                                  );
+                                }
+                              }}
+                              className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(
+                                batch.status
+                              )} hover:opacity-80 hover:shadow-sm cursor-pointer transition-all duration-200 border-2 border-transparent hover:border-orange-300`}
+                              title="Click to view harvest summary"
+                            >
+                              {batch.status.charAt(0).toUpperCase() +
+                                batch.status.slice(1)}
+                              <span className="ml-1 text-xs animate-pulse">
+                                📊
+                              </span>
+                            </button>
+                          ) : (
+                            <span
+                              className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(
+                                batch.status
+                              )}`}
+                            >
+                              {batch.status.charAt(0).toUpperCase() +
+                                batch.status.slice(1)}
+                            </span>
+                          )}
                         </td>
                         <td className="px-4 py-4 whitespace-nowrap text-sm font-medium">
                           <div className="flex space-x-2">
@@ -1168,6 +1513,7 @@ export default function EnhancedBatches() {
                               <option value="harvested">Harvested</option>
                               <option value="archived">Archived</option>
                             </select>
+
                             <button
                               onClick={() => handleDeleteBatch(batch.id)}
                               className="text-red-600 hover:text-red-900 text-xs"
@@ -1388,9 +1734,83 @@ export default function EnhancedBatches() {
                       <input
                         type="number"
                         value={lightsForStrain}
-                        onChange={(e) => setLightsForStrain(e.target.value)}
+                        onChange={(e) => {
+                          const inputValue = e.target.value;
+                          const lights = parseInt(inputValue) || 0;
+
+                          // Calculate max allowed lights
+                          let maxLights = Infinity;
+                          if (newBatch.room_id) {
+                            const room = rooms.find(
+                              (r) => r.id === newBatch.room_id
+                            );
+                            if (room && room.lights) {
+                              const usedLights = batchStrains.reduce(
+                                (sum, strain) => sum + strain.lights_assigned,
+                                0
+                              );
+                              maxLights = room.lights - usedLights;
+                            }
+                          }
+
+                          // Prevent entering more than max lights
+                          if (lights > maxLights) {
+                            setLightsForStrain(maxLights.toString());
+                            // Auto-calculate percentage based on max lights
+                            if (newBatch.room_id) {
+                              const room = rooms.find(
+                                (r) => r.id === newBatch.room_id
+                              );
+                              if (room && room.lights) {
+                                const percentage =
+                                  (maxLights / room.lights) * 100;
+                                setPercentageForStrain(percentage.toFixed(1));
+                              }
+                            }
+                          } else {
+                            setLightsForStrain(inputValue);
+                            // Auto-calculate percentage based on room capacity
+                            if (newBatch.room_id) {
+                              const room = rooms.find(
+                                (r) => r.id === newBatch.room_id
+                              );
+                              if (room && room.lights) {
+                                const percentage = (lights / room.lights) * 100;
+                                setPercentageForStrain(percentage.toFixed(1));
+                              }
+                            }
+                          }
+                        }}
+                        max={(() => {
+                          if (!newBatch.room_id) return undefined;
+                          const room = rooms.find(
+                            (r) => r.id === newBatch.room_id
+                          );
+                          if (!room || !room.lights) return undefined;
+
+                          // Calculate remaining lights
+                          const usedLights = batchStrains.reduce(
+                            (sum, strain) => sum + strain.lights_assigned,
+                            0
+                          );
+                          const remainingLights = room.lights - usedLights;
+                          return Math.max(0, remainingLights);
+                        })()}
                         className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 text-gray-900 bg-white"
-                        placeholder="Number of lights"
+                        placeholder={(() => {
+                          if (!newBatch.room_id) return "Number of lights";
+                          const room = rooms.find(
+                            (r) => r.id === newBatch.room_id
+                          );
+                          if (!room || !room.lights) return "Number of lights";
+
+                          const usedLights = batchStrains.reduce(
+                            (sum, strain) => sum + strain.lights_assigned,
+                            0
+                          );
+                          const remainingLights = room.lights - usedLights;
+                          return `Max: ${remainingLights} lights available`;
+                        })()}
                         aria-label="Lights assigned to strain"
                         title="Lights assigned to strain"
                       />
@@ -1403,13 +1823,13 @@ export default function EnhancedBatches() {
                       <input
                         type="number"
                         value={percentageForStrain}
-                        onChange={(e) => setPercentageForStrain(e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 text-gray-900 bg-white"
-                        placeholder="%"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 text-gray-900 bg-gray-50"
+                        placeholder="Auto-calculated"
                         min="0"
                         max="100"
-                        aria-label="Percentage of room for strain"
-                        title="Percentage of room for strain"
+                        readOnly
+                        aria-label="Percentage of room for strain (auto-calculated)"
+                        title="Percentage is automatically calculated based on lights assigned"
                       />
                     </div>
                   </div>
@@ -1445,21 +1865,24 @@ export default function EnhancedBatches() {
                         {batchStrains.map((strain, index) => (
                           <div
                             key={index}
-                            className="flex items-center justify-between bg-gray-50 p-3 rounded-md"
+                            className="flex items-center justify-between bg-blue-50 border border-blue-200 p-3 rounded-lg shadow-sm"
                           >
-                            <div>
-                              <span className="font-medium">
-                                {strain.strain_name}
-                              </span>
-                              <span className="text-sm text-gray-500 ml-2">
-                                ({strain.lights_assigned} lights,{" "}
-                                {strain.percentage}%)
-                              </span>
+                            <div className="flex items-center">
+                              <div className="w-2 h-2 bg-blue-500 rounded-full mr-3"></div>
+                              <div>
+                                <span className="font-semibold text-blue-900">
+                                  {strain.strain_name}
+                                </span>
+                                <span className="text-sm text-blue-700 ml-2 font-medium">
+                                  ({strain.lights_assigned} lights,{" "}
+                                  {strain.percentage}%)
+                                </span>
+                              </div>
                             </div>
                             <button
                               type="button"
                               onClick={() => removeStrainFromBatch(index)}
-                              className="text-red-600 hover:text-red-800"
+                              className="text-red-600 hover:text-red-800 p-1 rounded-full hover:bg-red-50 transition-colors"
                               aria-label="Remove strain from batch"
                               title="Remove strain from batch"
                             >
@@ -1482,22 +1905,48 @@ export default function EnhancedBatches() {
                       </div>
 
                       {/* Summary */}
-                      <div className="mt-3 p-3 bg-blue-50 rounded-md">
-                        <div className="text-sm text-blue-800">
-                          <div>
-                            Total Lights:{" "}
-                            {batchStrains.reduce(
-                              (sum, s) => sum + s.lights_assigned,
-                              0
-                            )}
+                      <div className="mt-3 p-4 bg-green-50 border border-green-200 rounded-lg">
+                        <div className="text-sm font-semibold text-green-900">
+                          <div className="flex items-center mb-2">
+                            <svg
+                              className="w-4 h-4 mr-2"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                              />
+                            </svg>
+                            Batch Summary
                           </div>
-                          <div>
-                            Total Percentage:{" "}
-                            {batchStrains.reduce(
-                              (sum, s) => sum + s.percentage,
-                              0
-                            )}
-                            %
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <span className="text-green-700">
+                                Total Lights:
+                              </span>{" "}
+                              <span className="font-bold">
+                                {batchStrains.reduce(
+                                  (sum, s) => sum + s.lights_assigned,
+                                  0
+                                )}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-green-700">
+                                Total Percentage:
+                              </span>{" "}
+                              <span className="font-bold">
+                                {batchStrains.reduce(
+                                  (sum, s) => sum + s.percentage,
+                                  0
+                                )}
+                                %
+                              </span>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -1563,11 +2012,18 @@ export default function EnhancedBatches() {
               <div className="flex justify-between items-center p-6 pb-4 border-b border-gray-100">
                 <div>
                   <h3 className="text-2xl font-bold text-gray-900">
-                    Harvest Data Entry
+                    {viewingExistingHarvest
+                      ? "Harvest Summary"
+                      : "Harvest Data Entry"}
                   </h3>
                   <p className="text-sm text-gray-500 mt-1 font-medium">
                     {selectedBatchForHarvest.batch_code} -{" "}
                     {selectedBatchForHarvest.room_name}
+                    {viewingExistingHarvest && (
+                      <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                        Viewing Saved Data
+                      </span>
+                    )}
                   </p>
                 </div>
                 <motion.button
@@ -1601,222 +2057,230 @@ export default function EnhancedBatches() {
               {/* Modal Content */}
               <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
                 {/* Instructions */}
-                <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-                  <h4 className="text-sm font-semibold text-blue-900 mb-2">
-                    Instructions
-                  </h4>
-                  <p className="text-sm text-blue-800">
-                    Enter the harvest data for each strain in this batch. Input
-                    the weight in pounds (lbs) for Bigs, Smalls, and Micros. The
-                    system will automatically calculate the total harvest and
-                    yield per light.
-                  </p>
-                </div>
+                {!viewingExistingHarvest && (
+                  <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                    <h4 className="text-sm font-semibold text-blue-900 mb-2">
+                      Instructions
+                    </h4>
+                    <p className="text-sm text-blue-800">
+                      Enter the harvest data for each strain in this batch.
+                      Input the weight in pounds (lbs) for Bigs, Smalls, and
+                      Micros. The system will automatically calculate the total
+                      harvest and yield per light.
+                    </p>
+                  </div>
+                )}
 
                 {/* Strain Harvest Data Entry */}
-                <div className="space-y-4">
-                  <h4 className="text-lg font-semibold text-gray-900">
-                    Harvest Data by Strain
-                  </h4>
+                {!viewingExistingHarvest && (
+                  <div className="space-y-4">
+                    <h4 className="text-lg font-semibold text-gray-900">
+                      Harvest Data by Strain
+                    </h4>
 
-                  {harvestData.map((strain, index) => (
-                    <div
-                      key={strain.strain_id}
-                      className="bg-gray-50 p-5 rounded-xl border border-gray-200"
-                    >
-                      <div className="flex items-center mb-4">
-                        <div className="w-3 h-3 bg-green-500 rounded-full mr-3"></div>
-                        <h5 className="text-base font-semibold text-gray-900">
-                          {strain.strain_name}
-                        </h5>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
-                            Bigs (lbs)
-                          </label>
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.1"
-                            value={strain.bigs_lbs === 0 ? "" : strain.bigs_lbs}
-                            onChange={(e) =>
-                              updateHarvestData(
-                                strain.strain_id,
-                                "bigs_lbs",
-                                parseFloat(e.target.value) || 0
-                              )
-                            }
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 text-gray-900 placeholder-gray-400"
-                            placeholder="0.0"
-                          />
+                    {harvestData.map((strain, index) => (
+                      <div
+                        key={strain.strain_id}
+                        className="bg-gray-50 p-5 rounded-xl border border-gray-200"
+                      >
+                        <div className="flex items-center mb-4">
+                          <div className="w-3 h-3 bg-green-500 rounded-full mr-3"></div>
+                          <h5 className="text-base font-semibold text-gray-900">
+                            {strain.strain_name}
+                          </h5>
                         </div>
 
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
-                            Smalls (lbs)
-                          </label>
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.1"
-                            value={
-                              strain.smalls_lbs === 0 ? "" : strain.smalls_lbs
-                            }
-                            onChange={(e) =>
-                              updateHarvestData(
-                                strain.strain_id,
-                                "smalls_lbs",
-                                parseFloat(e.target.value) || 0
-                              )
-                            }
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 text-gray-900 placeholder-gray-400"
-                            placeholder="0.0"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
-                            Micros (lbs)
-                          </label>
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.1"
-                            value={
-                              strain.micros_lbs === 0 ? "" : strain.micros_lbs
-                            }
-                            onChange={(e) =>
-                              updateHarvestData(
-                                strain.strain_id,
-                                "micros_lbs",
-                                parseFloat(e.target.value) || 0
-                              )
-                            }
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 text-gray-900 placeholder-gray-400"
-                            placeholder="0.0"
-                          />
-                        </div>
-                      </div>
-
-                      {/* Price Inputs */}
-                      <div className="mt-6">
-                        <h6 className="text-sm font-medium text-gray-700 mb-3">
-                          Sale Price per Pound ($)
-                        </h6>
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                           <div>
-                            <label className="block text-xs font-medium text-gray-600 mb-2">
-                              Bigs Price ($/lb)
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Bigs (lbs)
                             </label>
                             <input
                               type="number"
                               min="0"
-                              step="0.01"
+                              step="0.1"
                               value={
-                                strain.bigs_price_per_lb === 0
-                                  ? ""
-                                  : strain.bigs_price_per_lb
+                                strain.bigs_lbs === 0 ? "" : strain.bigs_lbs
                               }
                               onChange={(e) =>
                                 updateHarvestData(
                                   strain.strain_id,
-                                  "bigs_price_per_lb",
+                                  "bigs_lbs",
                                   parseFloat(e.target.value) || 0
                                 )
                               }
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 placeholder-gray-400"
-                              placeholder="0.00"
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 text-gray-900 placeholder-gray-400"
+                              placeholder="0.0"
+                              disabled={viewingExistingHarvest}
                             />
                           </div>
 
                           <div>
-                            <label className="block text-xs font-medium text-gray-600 mb-2">
-                              Smalls Price ($/lb)
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Smalls (lbs)
                             </label>
                             <input
                               type="number"
                               min="0"
-                              step="0.01"
+                              step="0.1"
                               value={
-                                strain.smalls_price_per_lb === 0
-                                  ? ""
-                                  : strain.smalls_price_per_lb
+                                strain.smalls_lbs === 0 ? "" : strain.smalls_lbs
                               }
                               onChange={(e) =>
                                 updateHarvestData(
                                   strain.strain_id,
-                                  "smalls_price_per_lb",
+                                  "smalls_lbs",
                                   parseFloat(e.target.value) || 0
                                 )
                               }
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 placeholder-gray-400"
-                              placeholder="0.00"
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 text-gray-900 placeholder-gray-400"
+                              placeholder="0.0"
                             />
                           </div>
 
                           <div>
-                            <label className="block text-xs font-medium text-gray-600 mb-2">
-                              Micros Price ($/lb)
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Micros (lbs)
                             </label>
                             <input
                               type="number"
                               min="0"
-                              step="0.01"
+                              step="0.1"
                               value={
-                                strain.micros_price_per_lb === 0
-                                  ? ""
-                                  : strain.micros_price_per_lb
+                                strain.micros_lbs === 0 ? "" : strain.micros_lbs
                               }
                               onChange={(e) =>
                                 updateHarvestData(
                                   strain.strain_id,
-                                  "micros_price_per_lb",
+                                  "micros_lbs",
                                   parseFloat(e.target.value) || 0
                                 )
                               }
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 placeholder-gray-400"
-                              placeholder="0.00"
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 text-gray-900 placeholder-gray-400"
+                              placeholder="0.0"
                             />
                           </div>
                         </div>
-                      </div>
 
-                      {/* Strain Total */}
-                      <div className="mt-3 pt-3 border-t border-gray-300">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div className="flex justify-between items-center">
-                            <span className="text-sm font-medium text-gray-600">
-                              Total Weight:
-                            </span>
-                            <span className="text-sm font-semibold text-gray-900">
-                              {(
-                                strain.bigs_lbs +
-                                strain.smalls_lbs +
-                                strain.micros_lbs
-                              ).toFixed(1)}{" "}
-                              lbs
-                            </span>
+                        {/* Price Inputs */}
+                        <div className="mt-6">
+                          <h6 className="text-sm font-medium text-gray-700 mb-3">
+                            Sale Price per Pound ($)
+                          </h6>
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div>
+                              <label className="block text-xs font-medium text-gray-600 mb-2">
+                                Bigs Price ($/lb)
+                              </label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={
+                                  strain.bigs_price_per_lb === 0
+                                    ? ""
+                                    : strain.bigs_price_per_lb
+                                }
+                                onChange={(e) =>
+                                  updateHarvestData(
+                                    strain.strain_id,
+                                    "bigs_price_per_lb",
+                                    parseFloat(e.target.value) || 0
+                                  )
+                                }
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 placeholder-gray-400"
+                                placeholder="0.00"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-medium text-gray-600 mb-2">
+                                Smalls Price ($/lb)
+                              </label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={
+                                  strain.smalls_price_per_lb === 0
+                                    ? ""
+                                    : strain.smalls_price_per_lb
+                                }
+                                onChange={(e) =>
+                                  updateHarvestData(
+                                    strain.strain_id,
+                                    "smalls_price_per_lb",
+                                    parseFloat(e.target.value) || 0
+                                  )
+                                }
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 placeholder-gray-400"
+                                placeholder="0.00"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-medium text-gray-600 mb-2">
+                                Micros Price ($/lb)
+                              </label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={
+                                  strain.micros_price_per_lb === 0
+                                    ? ""
+                                    : strain.micros_price_per_lb
+                                }
+                                onChange={(e) =>
+                                  updateHarvestData(
+                                    strain.strain_id,
+                                    "micros_price_per_lb",
+                                    parseFloat(e.target.value) || 0
+                                  )
+                                }
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 placeholder-gray-400"
+                                placeholder="0.00"
+                              />
+                            </div>
                           </div>
-                          <div className="flex justify-between items-center">
-                            <span className="text-sm font-medium text-gray-600">
-                              Total Revenue:
-                            </span>
-                            <span className="text-sm font-semibold text-green-700">
-                              $
-                              {(
-                                strain.bigs_lbs * strain.bigs_price_per_lb +
-                                strain.smalls_lbs * strain.smalls_price_per_lb +
-                                strain.micros_lbs * strain.micros_price_per_lb
-                              ).toFixed(2)}
-                            </span>
+                        </div>
+
+                        {/* Strain Total */}
+                        <div className="mt-3 pt-3 border-t border-gray-300">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="flex justify-between items-center">
+                              <span className="text-sm font-medium text-gray-600">
+                                Total Weight:
+                              </span>
+                              <span className="text-sm font-semibold text-gray-900">
+                                {formatNumber(
+                                  strain.bigs_lbs +
+                                    strain.smalls_lbs +
+                                    strain.micros_lbs
+                                )}{" "}
+                                lbs
+                              </span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <span className="text-sm font-medium text-gray-600">
+                                Total Revenue:
+                              </span>
+                              <span className="text-sm font-semibold text-green-700">
+                                {formatCurrency(
+                                  strain.bigs_lbs * strain.bigs_price_per_lb +
+                                    strain.smalls_lbs *
+                                      strain.smalls_price_per_lb +
+                                    strain.micros_lbs *
+                                      strain.micros_price_per_lb
+                                )}
+                              </span>
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
 
                 {/* Harvest Summary */}
                 {harvestSummary && (
@@ -1824,18 +2288,13 @@ export default function EnhancedBatches() {
                     <h4 className="text-lg font-semibold text-green-900 mb-4 flex items-center">
                       <div className="w-3 h-3 bg-green-500 rounded-full mr-3"></div>
                       Harvest Summary
-                      {harvestDataSaved && (
-                        <span className="ml-3 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                          ✓ Saved
-                        </span>
-                      )}
                     </h4>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
                       <div className="bg-white p-4 rounded-lg border border-green-200">
                         <div className="text-center">
                           <div className="text-2xl font-bold text-green-700">
-                            {harvestSummary.total_harvest_lbs.toFixed(1)}
+                            {formatNumber(harvestSummary.total_harvest_lbs)}
                           </div>
                           <div className="text-xs text-green-600 font-medium">
                             Total Harvest (lbs)
@@ -1857,7 +2316,7 @@ export default function EnhancedBatches() {
                       <div className="bg-white p-4 rounded-lg border border-green-200">
                         <div className="text-center">
                           <div className="text-2xl font-bold text-green-700">
-                            ${harvestSummary.total_revenue.toFixed(2)}
+                            {formatCurrency(harvestSummary.total_revenue)}
                           </div>
                           <div className="text-xs text-green-600 font-medium">
                             Total Revenue
@@ -1868,7 +2327,7 @@ export default function EnhancedBatches() {
                       <div className="bg-white p-4 rounded-lg border border-green-200">
                         <div className="text-center">
                           <div className="text-2xl font-bold text-green-700">
-                            ${harvestSummary.revenue_per_light.toFixed(2)}
+                            {formatCurrency(harvestSummary.revenue_per_light)}
                           </div>
                           <div className="text-xs text-green-600 font-medium">
                             Revenue per Light
@@ -1886,7 +2345,7 @@ export default function EnhancedBatches() {
                         <div className="bg-white p-3 rounded-lg border border-blue-200">
                           <div className="text-center">
                             <div className="text-lg font-bold text-blue-700">
-                              ${harvestSummary.cost_to_grow.toFixed(2)}
+                              {formatCurrency(harvestSummary.cost_to_grow)}
                             </div>
                             <div className="text-xs text-blue-600 font-medium">
                               Cost to Grow
@@ -1903,7 +2362,7 @@ export default function EnhancedBatches() {
                                   : "text-red-700"
                               }`}
                             >
-                              ${harvestSummary.profit_loss.toFixed(2)}
+                              {formatCurrency(harvestSummary.profit_loss)}
                             </div>
                             <div className="text-xs text-blue-600 font-medium">
                               Profit/Loss
@@ -1957,13 +2416,82 @@ export default function EnhancedBatches() {
                           </div>
                         </div>
                       </div>
+
+                      {/* Profit Margin Visualization */}
+                      <div className="bg-white p-4 mt-5 rounded-lg border border-gray-200 mb-4">
+                        <h5 className="text-md font-semibold text-gray-900 mb-3">
+                          Profit Margin
+                        </h5>
+                        <div className="relative h-8 bg-gray-200 rounded-full overflow-hidden">
+                          <div
+                            className={`absolute top-0 left-0 h-full transition-all duration-500 ${
+                              harvestSummary.net_income_sales_ratio >= 0
+                                ? "bg-green-500"
+                                : "bg-red-500"
+                            }`}
+                            style={{
+                              width: `${Math.min(
+                                Math.abs(harvestSummary.net_income_sales_ratio),
+                                100
+                              )}%`,
+                            }}
+                          ></div>
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            <span className="text-sm font-bold text-white drop-shadow">
+                              {harvestSummary.net_income_sales_ratio.toFixed(1)}
+                              % Margin
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex justify-between text-xs text-gray-600 mt-2">
+                          <span>0%</span>
+                          <span>50%</span>
+                          <span>100%</span>
+                        </div>
+                      </div>
+
+                      {/* Simple Revenue and Cost Display */}
+                      <div className="flex justify-center space-x-8 mt-4">
+                        <div className="text-center">
+                          <div className="text-sm font-medium text-gray-600">
+                            Revenue
+                          </div>
+                          <div className="text-lg font-bold text-green-600">
+                            {formatCurrency(harvestSummary.total_revenue)}
+                          </div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-sm font-medium text-gray-600">
+                            Cost
+                          </div>
+                          <div className="text-lg font-bold text-red-600">
+                            {formatCurrency(harvestSummary.cost_to_grow)}
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 )}
 
                 {/* Action Buttons */}
                 <div className="flex justify-end space-x-3 pt-6 border-t border-gray-100">
-                  {harvestDataSaved ? (
+                  {viewingExistingHarvest ? (
+                    <motion.button
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={() => {
+                        setShowHarvestModal(false);
+                        setSelectedBatchForHarvest(null);
+                        setHarvestData([]);
+                        setHarvestSummary(null);
+                        setHarvestDataSaved(false);
+                        setViewingExistingHarvest(false);
+                      }}
+                      className="px-8 py-3 text-sm font-medium text-white bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 shadow-lg hover:shadow-xl rounded-xl transition-all duration-200"
+                    >
+                      Close
+                    </motion.button>
+                  ) : harvestDataSaved ? (
                     <motion.button
                       whileHover={{ scale: 1.02 }}
                       whileTap={{ scale: 0.98 }}
@@ -1989,6 +2517,7 @@ export default function EnhancedBatches() {
                           setHarvestData([]);
                           setHarvestSummary(null);
                           setHarvestDataSaved(false);
+                          setViewingExistingHarvest(false);
                         }}
                         className="px-6 py-3 text-sm font-medium text-gray-700 bg-white border-2 border-gray-200 rounded-xl hover:bg-gray-50 hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-all duration-200"
                       >
