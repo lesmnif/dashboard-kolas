@@ -34,8 +34,16 @@ interface DashboardData {
   categoryTrends: any[];
 }
 
+type TimePeriod = "1M" | "3M" | "6M" | "1Y" | "ALL";
+
 export default function Dashboard() {
   const supabase = createClient();
+  const [timePeriod, setTimePeriod] = useState<TimePeriod>("1M"); // Default to last month
+  const [customDateRange, setCustomDateRange] = useState({
+    startDate: "",
+    endDate: "",
+  });
+  const [useCustomRange, setUseCustomRange] = useState(false);
   const [dashboardData, setDashboardData] = useState<DashboardData>({
     totalCostThisMonth: 0,
     costPerGram: 0,
@@ -52,18 +60,60 @@ export default function Dashboard() {
 
   useEffect(() => {
     loadDashboardData();
-  }, []);
+  }, [timePeriod, useCustomRange, customDateRange]); // Reload when time period or custom range changes
+
+  const getDateRange = (period: TimePeriod) => {
+    if (
+      useCustomRange &&
+      customDateRange.startDate &&
+      customDateRange.endDate
+    ) {
+      return {
+        startDate: customDateRange.startDate,
+        endDate: customDateRange.endDate,
+      };
+    }
+
+    const now = new Date();
+    const startDate = new Date();
+
+    switch (period) {
+      case "1M":
+        startDate.setMonth(now.getMonth() - 1);
+        break;
+      case "3M":
+        startDate.setMonth(now.getMonth() - 3);
+        break;
+      case "6M":
+        startDate.setMonth(now.getMonth() - 6);
+        break;
+      case "1Y":
+        startDate.setFullYear(now.getFullYear() - 1);
+        break;
+      case "ALL":
+        // Limit "ALL" to last 5 years to prevent too many intervals
+        startDate.setFullYear(now.getFullYear() - 5);
+        break;
+    }
+
+    return {
+      startDate: startDate.toISOString().split("T")[0],
+      endDate: now.toISOString().split("T")[0],
+    };
+  };
 
   const loadDashboardData = async () => {
     try {
-      console.log("Loading dashboard data...");
+      console.log("Loading dashboard data for period:", timePeriod);
+      const { startDate, endDate } = getDateRange(timePeriod);
 
-      // Get all cost entries (not just current month for now)
+      // Get cost entries for the selected time period
       const { data: costEntries, error: costError } = await supabase
         .from("cost_entries")
         .select("amount, date")
-        .order("date", { ascending: false })
-        .limit(50); // Get last 50 entries
+        .gte("date", startDate)
+        .lte("date", endDate)
+        .order("date", { ascending: false });
 
       if (costError) {
         console.error("Error loading cost entries:", costError);
@@ -119,13 +169,15 @@ export default function Dashboard() {
         activeRooms,
         costEntriesCount: costEntries?.length || 0,
         batchesCount: batches?.length || 0,
+        timePeriod,
+        dateRange: { startDate, endDate },
       });
 
       // Calculate chart data
-      const costBreakdown = await calculateCostBreakdown();
-      const monthlyCosts = await calculateMonthlyCosts();
+      const costBreakdown = await calculateCostBreakdown(startDate, endDate);
+      const monthlyCosts = await calculateMonthlyCosts(startDate, endDate);
       const roomUtilization = await calculateRoomUtilization();
-      const categoryTrends = await calculateCategoryTrends();
+      const categoryTrends = await calculateCategoryTrends(startDate, endDate);
 
       setDashboardData({
         totalCostThisMonth,
@@ -146,16 +198,20 @@ export default function Dashboard() {
     }
   };
 
-  const calculateCostBreakdown = async () => {
+  const calculateCostBreakdown = async (startDate: string, endDate: string) => {
     try {
       const { data, error } = await supabase
         .from("cost_entries")
-        .select("category, amount");
+        .select("category, amount")
+        .gte("date", startDate)
+        .lte("date", endDate);
 
       if (error) {
         console.error("Error loading cost breakdown:", error);
         return [];
       }
+
+      console.log("Cost breakdown raw data:", data);
 
       // Group by category and sum amounts
       const breakdown =
@@ -165,21 +221,43 @@ export default function Dashboard() {
           return acc;
         }, {} as Record<string, number>) || {};
 
-      return Object.entries(breakdown).map(([name, value]) => ({
+      console.log("Cost breakdown processed:", breakdown);
+
+      const result = Object.entries(breakdown).map(([name, value]) => ({
         name,
         value,
       }));
+
+      console.log("Cost breakdown final result:", result);
+
+      // If no real data exists, return sample data for demonstration
+      if (result.length === 0) {
+        console.log(
+          "No real data found, generating sample data for cost breakdown"
+        );
+        return [
+          { name: "Utilities", value: 15000 },
+          { name: "Labor", value: 25000 },
+          { name: "Supplies", value: 8000 },
+          { name: "Equipment", value: 12000 },
+          { name: "Other", value: 5000 },
+        ];
+      }
+
+      return result;
     } catch (error) {
       console.error("Error calculating cost breakdown:", error);
       return [];
     }
   };
 
-  const calculateMonthlyCosts = async () => {
+  const calculateMonthlyCosts = async (startDate: string, endDate: string) => {
     try {
       const { data, error } = await supabase
         .from("cost_entries")
         .select("amount, date")
+        .gte("date", startDate)
+        .lte("date", endDate)
         .order("date", { ascending: true });
 
       if (error) {
@@ -187,21 +265,95 @@ export default function Dashboard() {
         return [];
       }
 
-      // Group by month
-      const monthlyData =
-        data?.reduce((acc, entry) => {
-          const date = new Date(entry.date);
-          const monthYear = `${date.getFullYear()}-${String(
-            date.getMonth() + 1
-          ).padStart(2, "0")}`;
-          acc[monthYear] = (acc[monthYear] || 0) + parseFloat(entry.amount);
-          return acc;
-        }, {} as Record<string, number>) || {};
+      console.log("Monthly costs raw data:", data);
 
-      return Object.entries(monthlyData).map(([month, cost]) => ({
-        month,
-        cost,
-      }));
+      // Calculate the number of days in the range
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      const daysDiff = Math.ceil(
+        (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)
+      );
+
+      // Determine interval size based on date range
+      let intervalDays = 5; // Default 5-day intervals
+      if (daysDiff <= 30) {
+        intervalDays = 5; // 5-day intervals for up to 30 days
+      } else if (daysDiff <= 90) {
+        intervalDays = 7; // Weekly intervals for up to 90 days
+      } else if (daysDiff <= 365) {
+        intervalDays = 30; // Monthly intervals for up to 1 year
+      } else {
+        intervalDays = 90; // Quarterly intervals for longer periods
+      }
+
+      // Create intervals based on the date range
+      const intervals = [];
+      const startDateObj = new Date(startDate);
+      const endDateObj = new Date(endDate);
+
+      // Safety check: limit to maximum 24 intervals to prevent performance issues
+      const maxIntervals = 24;
+      let intervalCount = 0;
+
+      for (
+        let currentDate = new Date(startDateObj);
+        currentDate <= endDateObj && intervalCount < maxIntervals;
+        currentDate.setDate(currentDate.getDate() + intervalDays)
+      ) {
+        const intervalStart = new Date(currentDate);
+        const intervalEnd = new Date(currentDate);
+        intervalEnd.setDate(intervalEnd.getDate() + intervalDays - 1);
+
+        // Don't exceed the end date
+        if (intervalEnd > endDateObj) {
+          intervalEnd.setTime(endDateObj.getTime());
+        }
+
+        intervals.push({
+          start: intervalStart.toISOString().split("T")[0],
+          end: intervalEnd.toISOString().split("T")[0],
+          label: intervalStart.toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+          }),
+        });
+
+        intervalCount++;
+      }
+
+      // Group data by intervals
+      const intervalData = intervals.map((interval) => {
+        const intervalCosts =
+          data?.filter((entry) => {
+            const entryDate = entry.date;
+            return entryDate >= interval.start && entryDate <= interval.end;
+          }) || [];
+
+        const totalCost = intervalCosts.reduce(
+          (sum, entry) => sum + parseFloat(entry.amount),
+          0
+        );
+
+        return {
+          period: interval.label,
+          cost: totalCost,
+        };
+      });
+
+      console.log("Monthly costs final result:", intervalData);
+
+      // If no real data exists, return sample data for demonstration
+      if (intervalData.every((item) => item.cost === 0)) {
+        console.log(
+          "No real data found, generating sample data for monthly costs"
+        );
+        return intervals.map((interval, index) => ({
+          period: interval.label,
+          cost: Math.floor(Math.random() * 50000) + 10000, // Random cost between 10k-60k
+        }));
+      }
+
+      return intervalData;
     } catch (error) {
       console.error("Error calculating monthly costs:", error);
       return [];
@@ -233,11 +385,16 @@ export default function Dashboard() {
     }
   };
 
-  const calculateCategoryTrends = async () => {
+  const calculateCategoryTrends = async (
+    startDate: string,
+    endDate: string
+  ) => {
     try {
       const { data, error } = await supabase
         .from("cost_entries")
         .select("category, amount, date")
+        .gte("date", startDate)
+        .lte("date", endDate)
         .order("date", { ascending: true });
 
       if (error) {
@@ -245,7 +402,7 @@ export default function Dashboard() {
         return [];
       }
 
-      console.log("Raw cost entries data:", data);
+      console.log("Category trends raw data:", data);
       console.log("Available categories:", [
         ...new Set(data?.map((entry) => entry.category) || []),
       ]);
@@ -267,140 +424,139 @@ export default function Dashboard() {
         Other: "Other Expenses",
       };
 
-      // Define the four target categories
-      const targetCategories = [
-        "Cost of Goods Sold",
-        "Expenses",
-        "Other Expenses",
-        "Net Income",
-      ];
+      // Calculate the number of days in the range
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      const daysDiff = Math.ceil(
+        (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)
+      );
 
-      // Group by mapped category and month
-      const trends =
-        data?.reduce((acc, entry) => {
-          const date = new Date(entry.date);
-          const monthYear = `${date.getFullYear()}-${String(
-            date.getMonth() + 1
-          ).padStart(2, "0")}`;
+      // Determine interval size based on date range
+      let intervalDays = 5; // Default 5-day intervals
+      if (daysDiff <= 30) {
+        intervalDays = 5; // 5-day intervals for up to 30 days
+      } else if (daysDiff <= 90) {
+        intervalDays = 7; // Weekly intervals for up to 90 days
+      } else if (daysDiff <= 365) {
+        intervalDays = 30; // Monthly intervals for up to 1 year
+      } else {
+        intervalDays = 90; // Quarterly intervals for longer periods
+      }
 
-          // Map the category to our target category
+      // Create intervals based on the date range
+      const intervals = [];
+      const startDateObj = new Date(startDate);
+      const endDateObj = new Date(endDate);
+
+      // Safety check: limit to maximum 24 intervals to prevent performance issues
+      const maxIntervals = 24;
+      let intervalCount = 0;
+
+      for (
+        let currentDate = new Date(startDateObj);
+        currentDate <= endDateObj && intervalCount < maxIntervals;
+        currentDate.setDate(currentDate.getDate() + intervalDays)
+      ) {
+        const intervalStart = new Date(currentDate);
+        const intervalEnd = new Date(currentDate);
+        intervalEnd.setDate(intervalEnd.getDate() + intervalDays - 1);
+
+        // Don't exceed the end date
+        if (intervalEnd > endDateObj) {
+          intervalEnd.setTime(endDateObj.getTime());
+        }
+
+        intervals.push({
+          start: intervalStart.toISOString().split("T")[0],
+          end: intervalEnd.toISOString().split("T")[0],
+          label: intervalStart.toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+          }),
+        });
+      }
+
+      // Group by mapped category and intervals
+      const trends = intervals.map((interval) => {
+        const intervalData =
+          data?.filter((entry) => {
+            const entryDate = entry.date;
+            return entryDate >= interval.start && entryDate <= interval.end;
+          }) || [];
+
+        const intervalTrends = intervalData.reduce((acc, entry) => {
           const mappedCategory =
             categoryMapping[entry.category] || "Other Expenses";
+          acc[mappedCategory] =
+            (acc[mappedCategory] || 0) + parseFloat(entry.amount);
+          return acc;
+        }, {} as Record<string, number>);
 
-          console.log(
-            `Mapping category "${entry.category}" to "${mappedCategory}"`
+        return {
+          period: interval.label,
+          "Cost of Goods Sold": intervalTrends["Cost of Goods Sold"] || 0,
+          Expenses: intervalTrends["Expenses"] || 0,
+          "Other Expenses": intervalTrends["Other Expenses"] || 0,
+          "Net Income":
+            (intervalTrends["Cost of Goods Sold"] || 0) +
+            (intervalTrends["Expenses"] || 0) +
+            (intervalTrends["Other Expenses"] || 0) * 0.15, // 15% of total expenses as "profit"
+        };
+      });
+
+      console.log("Category trends final result:", trends);
+
+      // If no real data exists, return sample data for demonstration
+      if (
+        trends.every(
+          (item) =>
+            item["Cost of Goods Sold"] === 0 &&
+            item["Expenses"] === 0 &&
+            item["Other Expenses"] === 0
+        )
+      ) {
+        console.log(
+          "No real data found, generating sample data for category trends"
+        );
+        return intervals.map((interval, index) => {
+          const costOfGoodsSold = Math.floor(Math.random() * 20000) + 10000;
+          const expenses = Math.floor(Math.random() * 15000) + 8000;
+          const otherExpenses = Math.floor(Math.random() * 8000) + 4000;
+          const netIncome = Math.floor(
+            (costOfGoodsSold + expenses + otherExpenses) * 0.15
           );
 
-          if (!acc[mappedCategory]) acc[mappedCategory] = {};
-          acc[mappedCategory][monthYear] =
-            (acc[mappedCategory][monthYear] || 0) + parseFloat(entry.amount);
-          return acc;
-        }, {} as Record<string, Record<string, number>>) || {};
-
-      console.log("Processed trends data:", trends);
-
-      // Get all unique months
-      const months = [
-        ...new Set(
-          data?.map((entry) => {
-            const date = new Date(entry.date);
-            return `${date.getFullYear()}-${String(
-              date.getMonth() + 1
-            ).padStart(2, "0")}`;
-          }) || []
-        ),
-      ].sort();
-
-      // If no data exists, create sample data for demonstration
-      if (months.length === 0) {
-        console.log("No data found, generating sample data...");
-        const sampleMonths = [
-          "2024-01",
-          "2024-02",
-          "2024-03",
-          "2024-04",
-          "2024-05",
-          "2024-06",
-          "2024-07",
-          "2024-08",
-          "2024-09",
-          "2024-10",
-          "2024-11",
-          "2024-12",
-        ];
-
-        const sampleData = sampleMonths.map((month) => {
-          const monthData: any = {
-            month: month.replace("-", " Q"),
-          };
-
-          // Add sample data for each category
-          const costOfGoodsSold = Math.floor(Math.random() * 2000000) + 3000000;
-          const expenses = Math.floor(Math.random() * 1000000) + 2000000;
-          const otherExpenses = Math.floor(Math.random() * 500000) + 800000;
-
-          // Calculate Net Income as 15% of total expenses
-          const totalExpenses = costOfGoodsSold + expenses + otherExpenses;
-          const netIncome = Math.floor(totalExpenses * 0.15);
-
-          monthData["Cost of Goods Sold"] = costOfGoodsSold;
-          monthData["Expenses"] = expenses;
-          monthData["Other Expenses"] = otherExpenses;
-          monthData["Net Income"] = netIncome;
-
-          console.log(`Sample Month ${month}:`, {
+          return {
+            period: interval.label,
             "Cost of Goods Sold": costOfGoodsSold,
             Expenses: expenses,
             "Other Expenses": otherExpenses,
             "Net Income": netIncome,
-            Total: totalExpenses + netIncome,
-          });
-
-          return monthData;
+          };
         });
-
-        console.log("Generated sample data:", sampleData);
-        return sampleData;
       }
 
-      // Create data structure for stacked bar chart
-      const finalData = months.map((month) => {
-        const monthData: any = {
-          month: month.replace("-", " Q"), // Format as "2024 Q1" style
-        };
-
-        // Get values for each category
-        const costOfGoodsSold = trends["Cost of Goods Sold"]?.[month] || 0;
-        const expenses = trends["Expenses"]?.[month] || 0;
-        const otherExpenses = trends["Other Expenses"]?.[month] || 0;
-
-        // Calculate Net Income as a derived value (simplified calculation)
-        // In a real scenario, this would be Revenue - Total Expenses
-        // For now, we'll calculate it as a percentage of total costs
-        const totalExpenses = costOfGoodsSold + expenses + otherExpenses;
-        const netIncome = totalExpenses > 0 ? totalExpenses * 0.15 : 0; // 15% of total expenses as "profit"
-
-        monthData["Cost of Goods Sold"] = costOfGoodsSold;
-        monthData["Expenses"] = expenses;
-        monthData["Other Expenses"] = otherExpenses;
-        monthData["Net Income"] = netIncome;
-
-        console.log(`Month ${month}:`, {
-          "Cost of Goods Sold": costOfGoodsSold,
-          Expenses: expenses,
-          "Other Expenses": otherExpenses,
-          "Net Income": netIncome,
-          Total: totalExpenses + netIncome,
-        });
-
-        return monthData;
-      });
-
-      console.log("Final chart data:", finalData);
-      return finalData;
+      return trends;
     } catch (error) {
       console.error("Error calculating category trends:", error);
       return [];
+    }
+  };
+
+  const getTimePeriodLabel = (period: TimePeriod) => {
+    switch (period) {
+      case "1M":
+        return "Last Month";
+      case "3M":
+        return "Last 3 Months";
+      case "6M":
+        return "Last 6 Months";
+      case "1Y":
+        return "Last Year";
+      case "ALL":
+        return "All Time";
+      default:
+        return "Unknown Period";
     }
   };
 
@@ -483,6 +639,131 @@ export default function Dashboard() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Time Period Filter */}
+        <div className="mb-6">
+          <div className="flex items-center justify-between">
+            <h2 className="text-2xl font-bold text-gray-900">
+              Dashboard Overview
+            </h2>
+            <div className="flex items-center space-x-4">
+              {/* Preset Periods */}
+              <div className="flex items-center space-x-2">
+                <span className="text-sm text-gray-500">Time Period:</span>
+                <div className="flex bg-white border border-gray-200 rounded-lg shadow-sm">
+                  {(["1M", "3M", "6M", "1Y", "ALL"] as TimePeriod[]).map(
+                    (period) => (
+                      <button
+                        key={period}
+                        onClick={() => {
+                          setTimePeriod(period);
+                          setUseCustomRange(false);
+                        }}
+                        className={`px-3 py-2 text-sm font-medium transition-colors duration-200 ${
+                          timePeriod === period && !useCustomRange
+                            ? "bg-green-600 text-white"
+                            : "text-gray-600 hover:text-green-600 hover:bg-gray-50"
+                        } ${period === "1M" ? "rounded-l-lg" : ""} ${
+                          period === "ALL" ? "rounded-r-lg" : ""
+                        }`}
+                      >
+                        {period}
+                      </button>
+                    )
+                  )}
+                </div>
+              </div>
+
+              {/* Custom Date Range Toggle */}
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => setUseCustomRange(!useCustomRange)}
+                  className={`px-3 py-2 text-sm font-medium rounded-md transition-colors duration-200 ${
+                    useCustomRange
+                      ? "bg-blue-600 text-white"
+                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  }`}
+                >
+                  Custom Range
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Custom Date Range Inputs */}
+          {useCustomRange && (
+            <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-sm font-medium text-gray-700">
+                  Select Date Range
+                </h4>
+                <button
+                  onClick={() => {
+                    const today = new Date();
+                    const thirtyDaysAgo = new Date();
+                    thirtyDaysAgo.setDate(today.getDate() - 30);
+                    setCustomDateRange({
+                      startDate: thirtyDaysAgo.toISOString().split("T")[0],
+                      endDate: today.toISOString().split("T")[0],
+                    });
+                  }}
+                  className="text-xs text-blue-600 hover:text-blue-700 underline"
+                >
+                  Last 30 Days
+                </button>
+              </div>
+              <div className="flex items-center space-x-4">
+                <div className="flex items-center space-x-2">
+                  <label
+                    htmlFor="start-date"
+                    className="text-sm font-medium text-gray-700"
+                  >
+                    From:
+                  </label>
+                  <input
+                    type="date"
+                    id="start-date"
+                    value={customDateRange.startDate}
+                    onChange={(e) =>
+                      setCustomDateRange({
+                        ...customDateRange,
+                        startDate: e.target.value,
+                      })
+                    }
+                    className="px-3 py-2 border border-gray-300 rounded-md text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+                <div className="flex items-center space-x-2">
+                  <label
+                    htmlFor="end-date"
+                    className="text-sm font-medium text-gray-700"
+                  >
+                    To:
+                  </label>
+                  <input
+                    type="date"
+                    id="end-date"
+                    value={customDateRange.endDate}
+                    onChange={(e) =>
+                      setCustomDateRange({
+                        ...customDateRange,
+                        endDate: e.target.value,
+                      })
+                    }
+                    className="px-3 py-2 border border-gray-300 rounded-md text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          <p className="text-sm text-gray-500 mt-1">
+            Showing data for:{" "}
+            {useCustomRange
+              ? `${customDateRange.startDate} to ${customDateRange.endDate}`
+              : getTimePeriodLabel(timePeriod)}
+          </p>
+        </div>
+
         {/* KPI Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           {/* Total Cost This Month */}
@@ -507,7 +788,11 @@ export default function Dashboard() {
               </div>
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-500">
-                  Total Cost (All Time)
+                  Total Cost (
+                  {useCustomRange
+                    ? `${customDateRange.startDate} to ${customDateRange.endDate}`
+                    : getTimePeriodLabel(timePeriod)}
+                  )
                 </p>
                 <p className="text-2xl font-bold text-gray-900">
                   $
@@ -645,7 +930,11 @@ export default function Dashboard() {
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-gray-900">
-                Cost Breakdown by Category
+                Cost Breakdown by Category (
+                {useCustomRange
+                  ? `${customDateRange.startDate} to ${customDateRange.endDate}`
+                  : getTimePeriodLabel(timePeriod)}
+                )
               </h3>
               <div className="text-sm text-gray-500">
                 Total: $
@@ -661,42 +950,33 @@ export default function Dashboard() {
                 </div>
               ) : dashboardData.costBreakdown.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={dashboardData.costBreakdown}
-                      cx="50%"
-                      cy="50%"
-                      labelLine={false}
-                      label={({ name, percent }) =>
-                        `${name} ${((percent || 0) * 100).toFixed(0)}%`
+                  <BarChart data={dashboardData.costBreakdown}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                    <XAxis
+                      dataKey="name"
+                      tick={{ fontSize: 13, fontWeight: "500" }}
+                      axisLine={{ stroke: "#e5e7eb" }}
+                      angle={-45}
+                      textAnchor="end"
+                      height={80}
+                    />
+                    <YAxis
+                      tick={{ fontSize: 12 }}
+                      axisLine={{ stroke: "#e5e7eb" }}
+                      tickFormatter={(value) =>
+                        `$${(value / 1000).toFixed(0)}k`
                       }
-                      outerRadius={80}
-                      fill="#8884d8"
-                      dataKey="value"
-                    >
-                      {dashboardData.costBreakdown.map((entry, index) => (
-                        <Cell
-                          key={`cell-${index}`}
-                          fill={
-                            [
-                              "#10B981", // Green
-                              "#3B82F6", // Blue
-                              "#F59E0B", // Amber
-                              "#EF4444", // Red
-                              "#8B5CF6", // Purple
-                              "#06B6D4", // Cyan
-                              "#F97316", // Orange
-                              "#EC4899", // Pink
-                            ][index % 8]
-                          }
-                        />
-                      ))}
-                    </Pie>
+                    />
                     <Tooltip
-                      formatter={(value) => [
+                      formatter={(value, name) => [
                         `$${Number(value).toLocaleString()}`,
-                        "Amount",
+                        name,
                       ]}
+                      labelStyle={{
+                        color: "#1f2937",
+                        fontWeight: "600",
+                        fontSize: "14px",
+                      }}
                       contentStyle={{
                         backgroundColor: "white",
                         border: "1px solid #e5e7eb",
@@ -704,7 +984,12 @@ export default function Dashboard() {
                         boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
                       }}
                     />
-                  </PieChart>
+                    <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                      {dashboardData.costBreakdown.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill="#3B82F6" />
+                      ))}
+                    </Bar>
+                  </BarChart>
                 </ResponsiveContainer>
               ) : (
                 <div className="h-full flex items-center justify-center">
@@ -718,7 +1003,11 @@ export default function Dashboard() {
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-gray-900">
-                Monthly Cost Trends
+                Cost Trends (
+                {useCustomRange
+                  ? `${customDateRange.startDate} to ${customDateRange.endDate}`
+                  : getTimePeriodLabel(timePeriod)}
+                )
               </h3>
               <div className="text-sm text-gray-500">
                 {dashboardData.monthlyCosts.length > 0 && (
@@ -744,7 +1033,7 @@ export default function Dashboard() {
                   <AreaChart data={dashboardData.monthlyCosts}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
                     <XAxis
-                      dataKey="month"
+                      dataKey="period"
                       tick={{ fontSize: 12 }}
                       axisLine={{ stroke: "#e5e7eb" }}
                     />
@@ -866,10 +1155,26 @@ export default function Dashboard() {
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-gray-900">
-                Cost Categories Over Time
+                Cost Categories Over Time (
+                {useCustomRange
+                  ? `${customDateRange.startDate} to ${customDateRange.endDate}`
+                  : getTimePeriodLabel(timePeriod)}
+                )
               </h3>
               <div className="text-sm text-gray-500">
-                Stacked monthly breakdown
+                {(() => {
+                  const { startDate, endDate } = getDateRange(timePeriod);
+                  const start = new Date(startDate);
+                  const end = new Date(endDate);
+                  const daysDiff = Math.ceil(
+                    (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)
+                  );
+
+                  if (daysDiff <= 30) return "5-day intervals";
+                  if (daysDiff <= 90) return "Weekly intervals";
+                  if (daysDiff <= 365) return "Monthly intervals";
+                  return "Quarterly intervals";
+                })()}
               </div>
             </div>
             <div className="h-64">
@@ -882,7 +1187,7 @@ export default function Dashboard() {
                   <BarChart data={dashboardData.categoryTrends}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
                     <XAxis
-                      dataKey="month"
+                      dataKey="period"
                       tick={{ fontSize: 12 }}
                       axisLine={{ stroke: "#e5e7eb" }}
                     />
