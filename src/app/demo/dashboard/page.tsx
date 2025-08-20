@@ -113,11 +113,10 @@ export default function Dashboard() {
       console.log("Loading dashboard data for period:", timePeriod);
       const { startDate, endDate } = getDateRange(timePeriod);
 
-      // Get cost entries for the selected time period (only from Aug 20, 2025 onwards)
+      // Get cost entries for the selected time period
       const { data: costEntries, error: costError } = await supabase
         .from("cost_entries")
         .select("amount, date")
-        .gte("date", "2025-08-20") // Production start date
         .gte("date", startDate)
         .lte("date", endDate)
         .order("date", { ascending: false });
@@ -126,11 +125,10 @@ export default function Dashboard() {
         console.error("Error loading cost entries:", costError);
       }
 
-      // Debug: Check what date range all cost entries cover (only from Aug 20, 2025 onwards)
+      // Debug: Check what date range all cost entries cover
       const { data: allCostEntries, error: allCostError } = await supabase
         .from("cost_entries")
         .select("amount, date")
-        .gte("date", "2025-08-20") // Production start date
         .order("date", { ascending: false });
 
       if (allCostError) {
@@ -146,22 +144,20 @@ export default function Dashboard() {
         sampleEntries: allCostEntries?.slice(0, 3),
       });
 
-      // Get active batches (only from Aug 20, 2025 onwards)
+      // Get active batches
       const { data: batches, error: batchesError } = await supabase
         .from("batches")
         .select("status, expected_harvest, batch_code")
-        .eq("status", "active")
-        .gte("created_at", "2025-08-20"); // Production start date
+        .eq("status", "active");
 
       if (batchesError) {
         console.error("Error loading batches:", batchesError);
       }
 
-      // Get rooms data (only from Aug 20, 2025 onwards)
+      // Get rooms data
       const { data: rooms, error: roomsError } = await supabase
         .from("rooms")
-        .select("status, name")
-        .gte("created_at", "2025-08-20"); // Production start date
+        .select("status, name");
 
       if (roomsError) {
         console.error("Error loading rooms:", roomsError);
@@ -235,7 +231,6 @@ export default function Dashboard() {
       const { data, error } = await supabase
         .from("cost_entries")
         .select("category, amount")
-        .gte("date", "2025-08-20") // Production start date
         .gte("date", startDate)
         .lte("date", endDate);
 
@@ -263,10 +258,18 @@ export default function Dashboard() {
 
       console.log("Cost breakdown final result:", result);
 
-      // If no real data exists, return empty array
+      // If no real data exists, return sample data for demonstration
       if (result.length === 0) {
-        console.log("No real data found for cost breakdown");
-        return [];
+        console.log(
+          "No real data found, generating sample data for cost breakdown"
+        );
+        return [
+          { name: "Utilities", value: 15000 },
+          { name: "Labor", value: 25000 },
+          { name: "Supplies", value: 8000 },
+          { name: "Equipment", value: 12000 },
+          { name: "Other", value: 5000 },
+        ];
       }
 
       return result;
@@ -281,7 +284,6 @@ export default function Dashboard() {
       const { data, error } = await supabase
         .from("cost_entries")
         .select("amount, date")
-        .gte("date", "2025-08-20") // Production start date
         .gte("date", startDate)
         .lte("date", endDate)
         .order("date", { ascending: true });
@@ -368,10 +370,15 @@ export default function Dashboard() {
 
       console.log("Monthly costs final result:", intervalData);
 
-      // If no real data exists, return empty array
+      // If no real data exists, return sample data for demonstration
       if (intervalData.every((item) => item.cost === 0)) {
-        console.log("No real data found for monthly costs");
-        return [];
+        console.log(
+          "No real data found, generating sample data for monthly costs"
+        );
+        return intervals.map((interval, index) => ({
+          period: interval.label,
+          cost: Math.floor(Math.random() * 50000) + 10000, // Random cost between 10k-60k
+        }));
       }
 
       return intervalData;
@@ -385,8 +392,7 @@ export default function Dashboard() {
     try {
       const { data, error } = await supabase
         .from("rooms")
-        .select("name, status")
-        .gte("created_at", "2025-08-20"); // Production start date
+        .select("name, status");
 
       if (error) {
         console.error("Error loading room utilization:", error);
@@ -415,7 +421,6 @@ export default function Dashboard() {
       const { data, error } = await supabase
         .from("cost_entries")
         .select("category, amount, date")
-        .gte("date", "2025-08-20") // Production start date
         .gte("date", startDate)
         .lte("date", endDate)
         .order("date", { ascending: true });
@@ -529,7 +534,7 @@ export default function Dashboard() {
 
       console.log("Category trends final result:", trends);
 
-      // If no real data exists, return empty array
+      // If no real data exists, return sample data for demonstration
       if (
         trends.every(
           (item) =>
@@ -538,8 +543,25 @@ export default function Dashboard() {
             item["Other Expenses"] === 0
         )
       ) {
-        console.log("No real data found for category trends");
-        return [];
+        console.log(
+          "No real data found, generating sample data for category trends"
+        );
+        return intervals.map((interval, index) => {
+          const costOfGoodsSold = Math.floor(Math.random() * 20000) + 10000;
+          const expenses = Math.floor(Math.random() * 15000) + 8000;
+          const otherExpenses = Math.floor(Math.random() * 8000) + 4000;
+          const netIncome = Math.floor(
+            (costOfGoodsSold + expenses + otherExpenses) * 0.15
+          );
+
+          return {
+            period: interval.label,
+            "Cost of Goods Sold": costOfGoodsSold,
+            Expenses: expenses,
+            "Other Expenses": otherExpenses,
+            "Net Income": netIncome,
+          };
+        });
       }
 
       return trends;
@@ -598,25 +620,25 @@ export default function Dashboard() {
             <div className="flex items-center space-x-6">
               <nav className="flex space-x-4">
                 <Link
-                  href="/dashboard"
+                  href="/demo/dashboard"
                   className="text-gray-900 hover:text-green-600 px-3 py-2 text-sm font-medium border-b-2 border-green-600"
                 >
                   Dashboard
                 </Link>
                 <Link
-                  href="/cost-entry"
+                  href="/demo/cost-entry"
                   className="text-gray-500 hover:text-green-600 px-3 py-2 text-sm font-medium hover:border-b-2 hover:border-green-600"
                 >
                   Cost Entry
                 </Link>
                 <Link
-                  href="/facility"
+                  href="/demo/facility"
                   className="text-gray-500 hover:text-green-600 px-3 py-2 text-sm font-medium hover:border-b-2 hover:border-green-600"
                 >
                   Facility
                 </Link>
                 <Link
-                  href="/batches"
+                  href="/demo/batches"
                   className="text-gray-500 hover:text-green-600 px-3 py-2 text-sm font-medium hover:border-b-2 hover:border-green-600"
                 >
                   Batches
@@ -624,8 +646,8 @@ export default function Dashboard() {
               </nav>
               <div className="flex items-center space-x-4">
                 <Link
-                  href="/demo/dashboard"
-                  className="inline-flex items-center px-3 py-2 border border-orange-300 text-sm font-medium rounded-md text-orange-700 bg-orange-50 hover:bg-orange-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500 transition-colors duration-200"
+                  href="/dashboard"
+                  className="inline-flex items-center px-3 py-2 border border-green-300 text-sm font-medium rounded-md text-green-700 bg-green-50 hover:bg-green-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200"
                 >
                   <svg
                     className="w-4 h-4 mr-2"
@@ -637,10 +659,10 @@ export default function Dashboard() {
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       strokeWidth={2}
-                      d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
+                      d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
                     />
                   </svg>
-                  Demo Mode
+                  Go to Production Mode
                 </Link>
                 <div className="flex items-center space-x-2 px-3 py-1 bg-gray-100 rounded-md">
                   <svg

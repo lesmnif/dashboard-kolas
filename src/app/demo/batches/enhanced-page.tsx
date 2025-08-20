@@ -140,11 +140,10 @@ export default function EnhancedBatches() {
         setStrains(strainsData || []);
       }
 
-      // Load rooms (only from Aug 20, 2025 onwards)
+      // Load rooms
       const { data: roomsData, error: roomsError } = await supabase
         .from("rooms")
         .select("id, name, area, lights, status, strain_id")
-        .gte("created_at", "2025-08-20") // Production start date
         .order("name");
 
       if (roomsError) {
@@ -181,7 +180,6 @@ export default function EnhancedBatches() {
             )
           `
         )
-        .gte("created_at", "2025-08-20") // Production start date
         .order("status", { ascending: true })
         .order("start_date", { ascending: true });
 
@@ -198,7 +196,6 @@ export default function EnhancedBatches() {
               strains(name)
             `
           )
-          .gte("created_at", "2025-08-20") // Production start date
           .order("status", { ascending: true })
           .order("start_date", { ascending: true });
 
@@ -280,7 +277,6 @@ export default function EnhancedBatches() {
       .from("batches")
       .select("batch_code")
       .eq("room_id", roomId)
-      .gte("created_at", "2025-08-20") // Production start date
       .like("batch_code", `${roomCode}-${year}-%`);
 
     if (error) {
@@ -1078,25 +1074,25 @@ export default function EnhancedBatches() {
             <div className="flex items-center space-x-6">
               <nav className="flex space-x-4">
                 <Link
-                  href="/dashboard"
+                  href="/demo/dashboard"
                   className="text-gray-500 hover:text-green-600 px-3 py-2 text-sm font-medium hover:border-b-2 hover:border-green-600"
                 >
                   Dashboard
                 </Link>
                 <Link
-                  href="/cost-entry"
+                  href="/demo/cost-entry"
                   className="text-gray-500 hover:text-green-600 px-3 py-2 text-sm font-medium hover:border-b-2 hover:border-green-600"
                 >
                   Cost Entry
                 </Link>
                 <Link
-                  href="/facility"
+                  href="/demo/facility"
                   className="text-gray-500 hover:text-green-600 px-3 py-2 text-sm font-medium hover:border-b-2 hover:border-green-600"
                 >
                   Facility
                 </Link>
                 <Link
-                  href="/batches"
+                  href="/demo/batches"
                   className="text-gray-900 hover:text-green-600 px-3 py-2 text-sm font-medium border-b-2 border-green-600"
                 >
                   Batches

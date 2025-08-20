@@ -52,7 +52,6 @@ export default function Facility() {
             batches(batch_code, status, start_date, expected_harvest)
           `
         )
-        .gte("created_at", "2025-08-20") // Production start date
         .order("name");
 
       if (error) {
@@ -174,7 +173,6 @@ export default function Facility() {
         )
         .eq("room_id", room.id)
         .eq("status", "active")
-        .gte("created_at", "2025-08-20") // Production start date
         .single();
 
       if (error) {
@@ -274,25 +272,25 @@ export default function Facility() {
             <div className="flex items-center space-x-6">
               <nav className="flex space-x-4">
                 <Link
-                  href="/dashboard"
+                  href="/demo/dashboard"
                   className="text-gray-500 hover:text-green-600 px-3 py-2 text-sm font-medium hover:border-b-2 hover:border-green-600"
                 >
                   Dashboard
                 </Link>
                 <Link
-                  href="/cost-entry"
+                  href="/demo/cost-entry"
                   className="text-gray-500 hover:text-green-600 px-3 py-2 text-sm font-medium hover:border-b-2 hover:border-green-600"
                 >
                   Cost Entry
                 </Link>
                 <Link
-                  href="/facility"
+                  href="/demo/facility"
                   className="text-gray-900 hover:text-green-600 px-3 py-2 text-sm font-medium border-b-2 border-green-600"
                 >
                   Facility
                 </Link>
                 <Link
-                  href="/batches"
+                  href="/demo/batches"
                   className="text-gray-500 hover:text-green-600 px-3 py-2 text-sm font-medium hover:border-b-2 hover:border-green-600"
                 >
                   Batches
@@ -382,130 +380,75 @@ export default function Facility() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {rooms.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="px-6 py-12 text-center">
-                      <div className="flex flex-col items-center space-y-4">
-                        <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center">
-                          <svg
-                            className="w-8 h-8 text-gray-400"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"
-                            />
-                          </svg>
-                        </div>
-                        <div className="text-center">
-                          <h3 className="text-lg font-medium text-gray-900 mb-2">
-                            No cultivation rooms yet
-                          </h3>
-                          <p className="text-gray-500 mb-4">
-                            Get started by adding your first cultivation room to
-                            track your facility.
-                          </p>
-                          <button
-                            onClick={() => {
-                              setShowAddModal(true);
-                              setTimeout(() => setModalVisible(true), 10);
-                            }}
-                            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200"
-                          >
-                            <svg
-                              className="w-4 h-4 mr-2"
-                              fill="none"
-                              stroke="currentColor"
-                              viewBox="0 0 24 24"
-                            >
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={2}
-                                d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-                              />
-                            </svg>
-                            Add Your First Room
-                          </button>
-                        </div>
-                      </div>
+                {rooms.map((room) => (
+                  <tr key={room.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {room.name}
+                    </td>
+
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {room.lights || "—"}
+                    </td>
+
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {room.current_batch ? (
+                        <button
+                          onClick={() => handleBatchClick(room)}
+                          className="text-blue-600 hover:text-blue-800 hover:underline focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 rounded"
+                        >
+                          {room.current_batch}
+                        </button>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {formatDate(room.batch_start_date || null)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {formatDate(room.batch_end_date || null)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span
+                        className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(
+                          room.status
+                        )}`}
+                      >
+                        {room.status}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                      <button
+                        onClick={() => handleDeleteRoom(room.id)}
+                        disabled={room.has_current_batch}
+                        className={`text-red-600 hover:text-red-900 ${
+                          room.has_current_batch
+                            ? "opacity-50 cursor-not-allowed"
+                            : ""
+                        }`}
+                        title={
+                          room.has_current_batch
+                            ? "Cannot delete room with active batch"
+                            : "Delete room"
+                        }
+                      >
+                        <svg
+                          className="w-4 h-4"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                          />
+                        </svg>
+                      </button>
                     </td>
                   </tr>
-                ) : (
-                  rooms.map((room) => (
-                    <tr key={room.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {room.name}
-                      </td>
-
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {room.lights || "—"}
-                      </td>
-
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {room.current_batch ? (
-                          <button
-                            onClick={() => handleBatchClick(room)}
-                            className="text-blue-600 hover:text-blue-800 hover:underline focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 rounded"
-                          >
-                            {room.current_batch}
-                          </button>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {formatDate(room.batch_start_date || null)}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {formatDate(room.batch_end_date || null)}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span
-                          className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(
-                            room.status
-                          )}`}
-                        >
-                          {room.status}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                        <button
-                          onClick={() => handleDeleteRoom(room.id)}
-                          disabled={room.has_current_batch}
-                          className={`text-red-600 hover:text-red-900 ${
-                            room.has_current_batch
-                              ? "opacity-50 cursor-not-allowed"
-                              : ""
-                          }`}
-                          title={
-                            room.has_current_batch
-                              ? "Cannot delete room with active batch"
-                              : "Delete room"
-                          }
-                        >
-                          <svg
-                            className="w-4 h-4"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                            />
-                          </svg>
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                )}
+                ))}
               </tbody>
             </table>
           </div>
