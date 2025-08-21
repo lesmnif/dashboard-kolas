@@ -272,24 +272,56 @@ export default function EnhancedBatches() {
     const roomNumber = roomNumberMatch ? roomNumberMatch[1] : "1";
     const roomCode = `R${roomNumber}`;
 
-    // Get the count of existing batches for this room in the current year
-    const { data: existingBatches, error } = await supabase
-      .from("batches")
-      .select("batch_code")
-      .eq("room_id", roomId)
-      .like("batch_code", `${roomCode}-${year}-%`);
+    try {
+      // Get ALL existing batch codes with this pattern globally (not just for this room)
+      // This is important because the unique constraint is on batch_code across all rooms
+      const { data: existingBatches, error } = await supabase
+        .from("batches")
+        .select("batch_code")
+        .like("batch_code", `${roomCode}-${year}-%`);
 
-    if (error) {
-      console.error("Error counting existing batches:", error);
-      // Fallback to 01 if there's an error
-      return `${roomCode}-${year}-01`;
+      if (error) {
+        console.error("Error fetching existing batches:", error);
+        throw error;
+      }
+
+      // Extract existing batch numbers and find the next available one
+      const existingNumbers = new Set<number>();
+      existingBatches?.forEach((batch) => {
+        if (batch.batch_code) {
+          const match = batch.batch_code.match(
+            new RegExp(`${roomCode}-${year}-(\\d+)`)
+          );
+          if (match) {
+            existingNumbers.add(parseInt(match[1]));
+          }
+        }
+      });
+
+      // Find the next available batch number (limit to 999 to prevent infinite loops)
+      let nextBatchNumber = 1;
+      while (existingNumbers.has(nextBatchNumber) && nextBatchNumber <= 999) {
+        nextBatchNumber++;
+      }
+
+      if (nextBatchNumber > 999) {
+        throw new Error("Too many batches for this room/year combination");
+      }
+
+      const batchNumber = String(nextBatchNumber).padStart(2, "0");
+      const generatedCode = `${roomCode}-${year}-${batchNumber}`;
+      console.log(`[DEBUG] Generated batch code: ${generatedCode}`);
+
+      return generatedCode;
+    } catch (error) {
+      console.error("Error generating sequential batch code:", error);
+      // Fallback to UUID-based batch code
+      const timestamp = Date.now().toString(36);
+      const randomPart = Math.random().toString(36).substring(2, 6);
+      const uuidBatchCode = `${roomCode}-${year}-${timestamp}-${randomPart}`;
+      console.log(`[DEBUG] Using UUID fallback batch code: ${uuidBatchCode}`);
+      return uuidBatchCode;
     }
-
-    // Calculate the next batch number for this room/year
-    const batchCount = (existingBatches?.length || 0) + 1;
-    const batchNumber = String(batchCount).padStart(2, "0");
-
-    return `${roomCode}-${year}-${batchNumber}`;
   };
 
   const handleAddStrainToBatch = () => {
@@ -389,33 +421,84 @@ export default function EnhancedBatches() {
       return;
     }
 
-    try {
-      // Get room info for batch code generation
-      const room = rooms.find((r) => r.id === newBatch.room_id);
-      const batchCode =
-        newBatch.batch_code ||
-        (room ? await generateBatchCode(room.name, room.id) : "");
+    const room = rooms.find((r) => r.id === newBatch.room_id);
+    if (!room) {
+      alert("Selected room not found");
+      return;
+    }
 
-      // Create the batch
-      const { data: batchData, error: batchError } = await supabase
-        .from("batches")
-        .insert({
-          room_id: newBatch.room_id,
-          strain_id: batchStrains[0].strain_id, // Use first strain as primary
-          batch_code: batchCode,
-          start_date: newBatch.start_date,
-          expected_harvest: newBatch.expected_harvest || null,
-          status: newBatch.status,
-        })
-        .select()
-        .single();
+    // Retry logic for duplicate key errors
+    const maxRetries = 3;
+    let batchData = null;
 
-      if (batchError) {
-        console.error("Error adding batch:", batchError);
-        alert("Error adding batch. Please try again.");
-        return;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        // Generate batch code for each attempt to handle race conditions
+        const batchCode =
+          newBatch.batch_code || (await generateBatchCode(room.name, room.id));
+
+        // Create the batch
+        const { data, error: batchError } = await supabase
+          .from("batches")
+          .insert({
+            room_id: newBatch.room_id,
+            strain_id: batchStrains[0].strain_id, // Use first strain as primary
+            batch_code: batchCode,
+            start_date: newBatch.start_date,
+            expected_harvest: newBatch.expected_harvest || null,
+            status: newBatch.status,
+          })
+          .select()
+          .single();
+
+        if (batchError) {
+          // Check if it's a duplicate key error
+          if (
+            batchError.code === "23505" &&
+            batchError.message.includes("batch_code")
+          ) {
+            console.warn(
+              `Duplicate batch code detected on attempt ${attempt}:`,
+              batchError
+            );
+
+            if (attempt === maxRetries) {
+              alert(
+                "Unable to generate a unique batch code after multiple attempts. Please try again or specify a custom batch code."
+              );
+              return;
+            }
+
+            // Continue to next retry attempt
+            continue;
+          } else {
+            // Other error, don't retry
+            console.error("Error adding batch:", batchError);
+            alert("Error adding batch. Please try again.");
+            return;
+          }
+        }
+
+        // Success - batch created
+        batchData = data;
+        break;
+      } catch (error) {
+        console.error(`Attempt ${attempt} failed:`, error);
+        if (attempt === maxRetries) {
+          alert("Error adding batch. Please try again.");
+          return;
+        }
       }
+    }
 
+    if (!batchData) {
+      alert(
+        "Failed to create batch after multiple attempts. Please try again."
+      );
+      return;
+    }
+
+    try {
       // Create batch strain assignments
       const strainAssignments: Omit<
         BatchStrainAssignment,
